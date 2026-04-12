@@ -1,24 +1,70 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { Stack } from 'expo-router';
+import { useEffect } from 'react';
+import { StyleSheet, View } from 'react-native';
+import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import 'react-native-reanimated';
+import { CartProvider } from '@/contexts/CartContext';
+import { FavoritesProvider } from '@/contexts/FavoritesContext';
+import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 
-import { useColorScheme } from '@/hooks/use-color-scheme';
+const MAX_WIDTH = 1600;
+
+const styles = StyleSheet.create({
+  outer: {
+    flex: 1,
+    backgroundColor: '#E2E8F0', // видно тільки якщо екран ширший за MAX_WIDTH
+    alignItems: 'center',
+  },
+  inner: {
+    flex: 1,
+    width: '100%',
+    maxWidth: MAX_WIDTH,
+    overflow: 'hidden',
+  },
+});
 
 export const unstable_settings = {
   anchor: '(tabs)',
 };
 
-export default function RootLayout() {
-  const colorScheme = useColorScheme();
+function AuthGuard({ children }: { children: React.ReactNode }) {
+  const { contractor, isLoading } = useAuth();
+  const segments = useSegments();
+  const router = useRouter();
 
+  useEffect(() => {
+    if (isLoading) return;
+    const onLoginScreen = segments[0] === 'login';
+    if (!contractor && !onLoginScreen) {
+      router.replace('/login');
+    } else if (contractor && onLoginScreen) {
+      router.replace('/(tabs)');
+    }
+  }, [contractor, isLoading, segments]);
+
+  return <>{children}</>;
+}
+
+export default function RootLayout() {
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
-      </Stack>
-      <StatusBar style="auto" />
-    </ThemeProvider>
+    <AuthProvider>
+      <CartProvider>
+        <FavoritesProvider>
+          <View style={styles.outer}>
+            <View style={styles.inner}>
+              <AuthGuard>
+                <Stack>
+                  <Stack.Screen name="login" options={{ headerShown: false }} />
+                  <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+                  <Stack.Screen name="category/[id]" options={{ headerShown: false }} />
+                  <Stack.Screen name="cart" options={{ headerShown: false }} />
+                  <Stack.Screen name="favorites" options={{ headerShown: false }} />
+                </Stack>
+              </AuthGuard>
+              <StatusBar style="dark" />
+            </View>
+          </View>
+        </FavoritesProvider>
+      </CartProvider>
+    </AuthProvider>
   );
 }
