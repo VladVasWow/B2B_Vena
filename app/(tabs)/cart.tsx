@@ -1,13 +1,59 @@
-import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useState } from 'react';
+import {
+  ActivityIndicator,
+  FlatList,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import { AppHeader } from '@/components/AppHeader';
 import { useCart, cartItemId } from '@/contexts/CartContext';
+import { useAuth } from '@/contexts/AuthContext';
+import { createOrder } from '@/services/odata';
 
 export default function CartScreen() {
   const { items, removeFromCart, updateQuantity, clearCart, itemCount, totalAmount } = useCart();
+  const { contractor, contract, priceType } = useAuth();
+  const router = useRouter();
+
+  const [ordering, setOrdering] = useState(false);
+  const [orderError, setOrderError] = useState<string | null>(null);
+
+  const handleOrder = async () => {
+    if (!contractor || !contract || !items.length) return;
+    setOrdering(true);
+    setOrderError(null);
+    try {
+      const docKey = await createOrder({
+        contractorKey: contractor.Ref_Key,
+        contractKey: contract.Ref_Key,
+        priceTypeKey: priceType?.Ref_Key ?? contract.ТипЦенПродажи_Key,
+        currencyKey: contract.ВалютаВзаиморасчетов_Key,
+        comment: '',
+        items: items.map((i) => ({
+          productKey: i.product.Ref_Key,
+          unitKey: i.unitKey,
+          quantity: i.quantity,
+          price: i.price,
+          vatRate: i.product.СтавкаНДС ?? 'НДС20',
+        })),
+      });
+      clearCart();
+      router.replace('/(tabs)/orders');
+    } catch (e) {
+      setOrderError((e as Error).message);
+    } finally {
+      setOrdering(false);
+    }
+  };
 
   return (
     <View style={styles.container}>
       <AppHeader showBack title="Кошик" />
+
       {items.length === 0 ? (
         <View style={styles.empty}>
           <Text style={styles.emptyIcon}>🛒</Text>
@@ -72,12 +118,32 @@ export default function CartScreen() {
                 <Text style={styles.totalAmount}>{totalAmount.toFixed(2)} грн</Text>
               )}
             </View>
+
+            {orderError ? (
+              <View style={styles.errorBox}>
+                <Ionicons name="alert-circle-outline" size={16} color="#EF4444" />
+                <Text style={styles.errorText}>{orderError}</Text>
+              </View>
+            ) : null}
+
             <View style={styles.footerBtns}>
-              <Pressable style={styles.clearBtn} onPress={clearCart}>
+              <Pressable
+                style={[styles.clearBtn, ordering && styles.btnDisabled]}
+                onPress={clearCart}
+                disabled={ordering}
+              >
                 <Text style={styles.clearBtnText}>Очистити</Text>
               </Pressable>
-              <Pressable style={styles.orderBtn}>
-                <Text style={styles.orderBtnText}>Оформити замовлення</Text>
+              <Pressable
+                style={[styles.orderBtn, ordering && styles.btnDisabled]}
+                onPress={handleOrder}
+                disabled={ordering}
+              >
+                {ordering ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.orderBtnText}>Оформити замовлення</Text>
+                )}
               </Pressable>
             </View>
           </View>
@@ -135,6 +201,12 @@ const styles = StyleSheet.create({
   },
   totalLabel: { fontSize: 15, fontWeight: '600', color: '#475569' },
   totalAmount: { fontSize: 18, fontWeight: '800', color: '#0F172A' },
+  errorBox: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 6,
+    backgroundColor: '#FEF2F2', borderRadius: 8,
+    paddingVertical: 8, paddingHorizontal: 12,
+  },
+  errorText: { flex: 1, fontSize: 13, color: '#EF4444', lineHeight: 18 },
   footerBtns: { flexDirection: 'row', gap: 10 },
   clearBtn: {
     flex: 1, paddingVertical: 12, borderRadius: 8,
@@ -143,7 +215,9 @@ const styles = StyleSheet.create({
   clearBtnText: { fontSize: 14, color: '#64748B', fontWeight: '600' },
   orderBtn: {
     flex: 2, paddingVertical: 12, borderRadius: 8,
-    backgroundColor: '#2563EB', alignItems: 'center',
+    backgroundColor: '#2563EB', alignItems: 'center', justifyContent: 'center',
+    minHeight: 44,
   },
   orderBtnText: { fontSize: 14, color: '#FFFFFF', fontWeight: '700' },
+  btnDisabled: { opacity: 0.6 },
 });

@@ -1,5 +1,9 @@
 // Expo Router API Route — виконується на сервері, немає CORS
-// URL: /api/proxy?path=Catalog_КатегорииТоваров&...
+// GET:  /api/proxy?path=<resource>&<odata-params>
+// POST: /api/proxy?path=<resource>  body=JSON
+
+const BASE = 'https://1csync.mailcn.com.ua:9443/VenaCentr/odata/standard.odata';
+const CREDENTIALS = Buffer.from('website:ty4hD65G7T').toString('base64');
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -20,20 +24,74 @@ export async function GET(request: Request) {
     })
     .join('&');
 
-  const targetUrl = `https://1csync.mailcn.com.ua:9443/VenaCentr/odata/standard.odata/${path}${query ? '?' + query : ''}`;
-  console.log('[proxy] →', targetUrl);
-
-  const credentials = Buffer.from('website:ty4hD65G7T').toString('base64');
+  const targetUrl = `${BASE}/${path}${query ? '?' + query : ''}`;
+  console.log('[proxy GET] →', targetUrl);
 
   const response = await fetch(targetUrl, {
     headers: {
-      Authorization: `Basic ${credentials}`,
+      Authorization: `Basic ${CREDENTIALS}`,
       Accept: 'application/json',
     },
   });
 
   const text = await response.text();
-  console.log('[proxy] status:', response.status, text.slice(0, 500));
+  console.log('[proxy GET] status:', response.status, text.slice(0, 500));
+
+  let data: unknown;
+  try { data = JSON.parse(text); } catch { data = { error: text }; }
+
+  return Response.json(data, { status: response.status });
+}
+
+export async function POST(request: Request) {
+  const url = new URL(request.url);
+  const path = url.searchParams.get('path') ?? '';
+  const targetUrl = `${BASE}/${path}?$format=json`;
+
+  console.log('[proxy POST] →', targetUrl);
+
+  const body = await request.text();
+
+  const response = await fetch(targetUrl, {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${CREDENTIALS}`,
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body,
+  });
+
+  const text = await response.text();
+  console.log('[proxy POST] status:', response.status, text.slice(0, 500));
+
+  let data: unknown;
+  try { data = JSON.parse(text); } catch { data = { error: text }; }
+
+  return Response.json(data, { status: response.status });
+}
+
+export async function PATCH(request: Request) {
+  const url = new URL(request.url);
+  const path = url.searchParams.get('path') ?? '';
+  const targetUrl = `${BASE}/${path}?$format=json`;
+
+  console.log('[proxy PATCH] →', targetUrl);
+
+  const body = await request.text();
+
+  const response = await fetch(targetUrl, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Basic ${CREDENTIALS}`,
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body,
+  });
+
+  const text = await response.text();
+  console.log('[proxy PATCH] status:', response.status, text.slice(0, 500));
 
   let data: unknown;
   try { data = JSON.parse(text); } catch { data = { error: text }; }

@@ -55,9 +55,6 @@ export default function RootLayout() {
                 <Stack>
                   <Stack.Screen name="login" options={{ headerShown: false }} />
                   <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-                  <Stack.Screen name="category/[id]" options={{ headerShown: false }} />
-                  <Stack.Screen name="cart" options={{ headerShown: false }} />
-                  <Stack.Screen name="favorites" options={{ headerShown: false }} />
                 </Stack>
               </AuthGuard>
               <StatusBar style="dark" />

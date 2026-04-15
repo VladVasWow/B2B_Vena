@@ -6,6 +6,9 @@ export const API_CONFIG = {
   PASSWORD: 'ty4hD65G7T',
 } as const;
 
+// Ref_Key організації для нових документів (Catalog_Организации)
+export const ORGANIZATION_KEY = 'd4970cf7-d21d-11d7-8892-00d0b721b194';
+
 // На вебі — через Expo API Route (без CORS), на мобільному — напряму
 export const IS_WEB = Platform.OS === 'web';
 

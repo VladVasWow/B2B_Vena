@@ -14,6 +14,7 @@ import { AppHeader } from '@/components/AppHeader';
 import { useFavorites } from '@/contexts/FavoritesContext';
 import { useCart } from '@/contexts/CartContext';
 import { useAuth } from '@/contexts/AuthContext';
+import { effectivePriceTypeKey } from '@/services/odata';
 import { getProductPrices, getUnitsByKeys, Product, ProductPrice } from '@/services/odata';
 import { getImageUrl } from '@/constants/api';
 
@@ -102,10 +103,10 @@ function FavCard({ item, width, prices, units, onAddToCart, onRemove }: FavCardP
 export default function FavoritesScreen() {
   const { favorites, removeFromFavorites } = useFavorites();
   const { addToCart } = useCart();
-  const { contract } = useAuth();
+  const { priceType } = useAuth();
   const { width } = useWindowDimensions();
 
-  const priceTypeKey = contract?.ТипЦенПродажи_Key ?? '';
+  const priceTypeKey = effectivePriceTypeKey(priceType);
 
   const [prices, setPrices] = useState<ProductPrice[]>([]);
   const [units, setUnits] = useState<Map<string, string>>(new Map());
@@ -123,7 +124,7 @@ export default function FavoritesScreen() {
     }
     setLoading(true);
     const keys = favorites.map((p) => p.Ref_Key);
-    getProductPrices(keys, priceTypeKey)
+    getProductPrices(keys, priceTypeKey, priceType)
       .then((fetchedPrices) => {
         setPrices(fetchedPrices);
         const unitKeys = [...new Set(fetchedPrices.map((p) => p.ЕдиницаИзмерения_Key))];

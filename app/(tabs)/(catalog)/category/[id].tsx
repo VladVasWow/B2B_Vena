@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   FlatList,
   Image,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -13,19 +14,21 @@ import {
 } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { BlurView } from 'expo-blur';
 import { getProducts, searchProducts, getAllCategories, getProductPrices, getUnitsByKeys, Category, Product, ProductPrice, Unit } from '@/services/odata';
 import { getImageUrl } from '@/constants/api';
 import { AppHeader } from '@/components/AppHeader';
 import { useCart } from '@/contexts/CartContext';
 import { useAuth } from '@/contexts/AuthContext';
+import { effectivePriceTypeKey } from '@/services/odata';
 import { useFavorites } from '@/contexts/FavoritesContext';
 import { ProductCard } from '@/components/ProductCard';
 
 const CARD_MIN_WIDTH = 180;
 const GAP = 8;
 const LIST_PADDING = 16;
-
 const PAGE_SIZE = 30;
+const MOBILE_BREAKPOINT = 768;
 
 // --- Дерево категорій ---
 
@@ -57,20 +60,24 @@ function CategoryNodeView({ node, selectedKey, onSelect, depth = 0 }: CategoryNo
 
   return (
     <View>
-      <Pressable
-        style={[styles.treeItem, isSelected && styles.treeItemSelected, { paddingLeft: 12 + depth * 14 }]}
-        onPress={() => {
-          onSelect(node.category.Ref_Key);
-          if (hasChildren) setExpanded((v) => !v);
-        }}
-      >
-        <Text style={styles.treeArrow}>
-          {hasChildren ? (expanded ? '▼' : '▶') : '  '}
-        </Text>
-        <Text style={[styles.treeLabel, isSelected && styles.treeLabelSelected]} numberOfLines={2}>
-          {node.category.Description}
-        </Text>
-      </Pressable>
+      <View style={[styles.treeItem, isSelected && styles.treeItemSelected, { paddingLeft: 12 + depth * 14 }]}>
+        {/* Стрілка — лише розгортає/згортає, не закриває drawer */}
+        <Pressable
+          hitSlop={8}
+          onPress={() => hasChildren && setExpanded((v) => !v)}
+          style={styles.treeArrowBtn}
+        >
+          <Text style={styles.treeArrow}>
+            {hasChildren ? (expanded ? '▼' : '▶') : '  '}
+          </Text>
+        </Pressable>
+        {/* Назва — вибирає категорію (і закриває drawer на мобільному) */}
+        <Pressable style={styles.treeLabelBtn} onPress={() => onSelect(node.category.Ref_Key)}>
+          <Text style={[styles.treeLabel, isSelected && styles.treeLabelSelected]} numberOfLines={2}>
+            {node.category.Description}
+          </Text>
+        </Pressable>
+      </View>
       {expanded && node.children.map((child) => (
         <CategoryNodeView
           key={child.category.Ref_Key}
@@ -116,61 +123,85 @@ function ProductRow({ item, prices, units }: ProductRowProps) {
 
   return (
     <View style={styles.rowItem}>
-      {/* Фото */}
-      {imgUrl ? (
-        <Image source={{ uri: imgUrl }} style={styles.rowImage} resizeMode="contain" />
-      ) : (
-        <View style={[styles.rowImage, styles.rowImagePlaceholder]}>
-          <Text style={styles.productImageNoPhoto}>—</Text>
+      {/* Рядок 1: фото + код/назва + серце */}
+      <View style={styles.rowTop}>
+        {imgUrl ? (
+          <Image source={{ uri: imgUrl }} style={styles.rowImage} resizeMode="contain" />
+        ) : (
+          <View style={[styles.rowImage, styles.rowImagePlaceholder]}>
+            <Text style={styles.productImageNoPhoto}>—</Text>
+          </View>
+        )}
+        <View style={styles.rowInfo}>
+          <Text style={styles.productCode}>{item.Code}</Text>
+          <Text style={styles.rowName} numberOfLines={2}>{item.Description}</Text>
         </View>
-      )}
-
-      {/* Код + назва */}
-      <View style={styles.rowInfo}>
-        <Text style={styles.productCode}>{item.Code}</Text>
-        <Text style={styles.rowName} numberOfLines={2}>{item.Description}</Text>
+        <Pressable onPress={() => toggleFavorite(item)} hitSlop={8} style={styles.rowHeartBtn}>
+          <Ionicons name={fav ? 'heart' : 'heart-outline'} size={20} color={fav ? '#EF4444' : '#CBD5E1'} />
+        </Pressable>
       </View>
 
-      {/* Одиниці виміру (горизонтальні чіпи) */}
-      {itemPrices.length > 0 ? (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.rowChips}
-          contentContainerStyle={styles.rowChipsContent}
-        >
-          {itemPrices.map((p) => {
-            const isActive = p.ЕдиницаИзмерения_Key === effectiveSelected;
-            return (
-              <Pressable
-                key={p.ЕдиницаИзмерения_Key}
-                style={[styles.rowChip, isActive && styles.rowChipSelected]}
-                onPress={() => setSelectedUnitKey(p.ЕдиницаИзмерения_Key)}
-              >
-                <Text style={[styles.rowChipUnit, isActive && styles.rowChipUnitSelected]}>
-                  {units?.get(p.ЕдиницаИзмерения_Key) ?? '—'}
-                </Text>
-                <Text style={[styles.rowChipPrice, isActive && styles.rowChipPriceSelected]}>
-                  {p.Цена.toFixed(2)} грн
-                </Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-      ) : (
-        <View style={styles.rowChips} />
-      )}
-
-      {/* Серце */}
-      <Pressable onPress={() => toggleFavorite(item)} hitSlop={8} style={styles.rowHeartBtn}>
-        <Ionicons name={fav ? 'heart' : 'heart-outline'} size={20} color={fav ? '#EF4444' : '#CBD5E1'} />
-      </Pressable>
-
-      {/* Кнопка */}
-      <Pressable style={styles.rowAddBtn} onPress={handleAddToCart}>
-        <Text style={styles.rowAddText}>+ В кошик</Text>
-      </Pressable>
+      {/* Рядок 2: чіпи + кнопка */}
+      <View style={styles.rowBottom}>
+        {itemPrices.length > 0 ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.rowChips}
+            contentContainerStyle={styles.rowChipsContent}
+          >
+            {itemPrices.map((p) => {
+              const isActive = p.ЕдиницаИзмерения_Key === effectiveSelected;
+              return (
+                <Pressable
+                  key={p.ЕдиницаИзмерения_Key}
+                  style={[styles.rowChip, isActive && styles.rowChipSelected]}
+                  onPress={() => setSelectedUnitKey(p.ЕдиницаИзмерения_Key)}
+                >
+                  <Text style={[styles.rowChipUnit, isActive && styles.rowChipUnitSelected]}>
+                    {units?.get(p.ЕдиницаИзмерения_Key) ?? '—'}
+                  </Text>
+                  <Text style={[styles.rowChipPrice, isActive && styles.rowChipPriceSelected]}>
+                    {p.Цена.toFixed(2)} грн
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        ) : (
+          <View style={styles.rowChips} />
+        )}
+        <Pressable style={styles.rowAddBtn} onPress={handleAddToCart}>
+          <Text style={styles.rowAddText}>+ В кошик</Text>
+        </Pressable>
+      </View>
     </View>
+  );
+}
+
+// --- Бічна панель категорій ---
+
+interface SidebarContentProps {
+  tree: CategoryNode[];
+  selectedKey: string | null;
+  onSelect: (key: string) => void;
+}
+
+function SidebarContent({ tree, selectedKey, onSelect }: SidebarContentProps) {
+  return (
+    <ScrollView>
+      {(tree ?? []).map((node) => (
+        <CategoryNodeView
+          key={node.category.Ref_Key}
+          node={node}
+          selectedKey={selectedKey}
+          onSelect={onSelect}
+        />
+      ))}
+      {tree.length === 0 && (
+        <Text style={styles.emptyText}>Немає підкатегорій</Text>
+      )}
+    </ScrollView>
   );
 }
 
@@ -178,7 +209,7 @@ function ProductRow({ item, prices, units }: ProductRowProps) {
 
 export default function CategoryScreen() {
   const { id, name } = useLocalSearchParams<{ id: string; name?: string }>();
-  const { contract } = useAuth();
+  const { priceType } = useAuth();
 
   const [allCategories, setAllCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -189,7 +220,9 @@ export default function CategoryScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const { width } = useWindowDimensions();
+  const isMobile = width < MOBILE_BREAKPOINT;
 
   const [catsLoading, setCatsLoading] = useState(true);
   const [prodsLoading, setProdsLoading] = useState(false);
@@ -198,11 +231,21 @@ export default function CategoryScreen() {
   // Ціни та одиниці виміру
   const [prices, setPrices] = useState<ProductPrice[]>([]);
   const [units, setUnits] = useState<Map<string, string>>(new Map());
-  const priceTypeKey = contract?.ТипЦенПродажи_Key ?? '';
+  const priceTypeKey = effectivePriceTypeKey(priceType);
 
-  // Завантаження категорій
+  // Завантаження категорій + скидання стану при зміні кореневої категорії
   useEffect(() => {
     if (!id) return;
+    // скидаємо всі залежні стани
+    setSelectedKey(null);
+    setProducts([]);
+    setPrices([]);
+    setUnits(new Map());
+    setPage(0);
+    setSearchQuery('');
+    setIsSearching(false);
+    setError(null);
+
     setCatsLoading(true);
     getAllCategories()
       .then((cats) => {
@@ -215,53 +258,40 @@ export default function CategoryScreen() {
       .finally(() => setCatsLoading(false));
   }, [id]);
 
-  // Збираємо всі ключі вузла + нащадків (BFS)
-  const collectKeys = useCallback((key: string): string[] => {
-    const result: string[] = [];
-    const queue = [key];
-    while (queue.length > 0) {
-      const k = queue.shift()!;
-      result.push(k);
-      allCategories.filter((c) => c.Parent_Key === k).forEach((c) => queue.push(c.Ref_Key));
-    }
-    return result;
-  }, [allCategories]);
+  // Спільний хелпер завантаження цін та одиниць — не залежить від інших useCallback
+  const applyPricesAndUnits = useCallback(async (items: Product[]) => {
+    if (!items.length || !priceTypeKey) { setPrices([]); setUnits(new Map()); return; }
+    const productKeys = items.map((p) => p.Ref_Key);
+    const fetchedPrices = await getProductPrices(productKeys, priceTypeKey, priceType);
+    setPrices(fetchedPrices);
+    const unitKeys = [...new Set(fetchedPrices.map((p) => p.ЕдиницаИзмерения_Key))];
+    const fetchedUnits = await getUnitsByKeys(unitKeys);
+    setUnits(new Map(fetchedUnits.map((u) => [u.Ref_Key, u.Description])));
+  }, [priceTypeKey, priceType]);
 
   // Завантаження товарів при виборі категорії або зміні сторінки
   const loadProducts = useCallback((key: string, pageNum: number) => {
     setProdsLoading(true);
     setError(null);
     getProducts(key, pageNum, PAGE_SIZE)
-      .then(({ items, hasMore: more }) => {
+      .then(async ({ items, hasMore: more }) => {
         setProducts(items);
         setHasMore(more);
-        if (items.length > 0 && priceTypeKey) {
-          const productKeys = items.map((p) => p.Ref_Key);
-          getProductPrices(productKeys, priceTypeKey).then((fetchedPrices) => {
-            setPrices(fetchedPrices);
-            const unitKeys = [...new Set(fetchedPrices.map((p) => p.ЕдиницаИзмерения_Key))];
-            getUnitsByKeys(unitKeys).then((fetchedUnits) => {
-              setUnits(new Map(fetchedUnits.map((u) => [u.Ref_Key, u.Description])));
-            });
-          });
-        } else {
-          setPrices([]);
-          setUnits(new Map());
-        }
+        await applyPricesAndUnits(items);
       })
       .catch((e) => setError(e.message))
       .finally(() => setProdsLoading(false));
-  }, [priceTypeKey]);
+  }, [applyPricesAndUnits]);
 
-  const handleSelect = (key: string) => {
+  const handleSelect = useCallback((key: string) => {
     setSelectedKey(key);
     setPage(0);
     setSearchQuery('');
     setIsSearching(false);
     loadProducts(key, 0);
-  };
+  }, [loadProducts]);
 
-  const handlePageChange = (newPage: number) => {
+  const handlePageChange = useCallback((newPage: number) => {
     if (!selectedKey) return;
     setPage(newPage);
     if (isSearching) {
@@ -269,7 +299,7 @@ export default function CategoryScreen() {
     } else {
       loadProducts(selectedKey, newPage);
     }
-  };
+  }, [selectedKey, isSearching, searchQuery, loadProducts]);
 
   const doSearch = useCallback((q: string, pageNum: number) => {
     if (q.trim().length < 2) {
@@ -280,42 +310,38 @@ export default function CategoryScreen() {
     setIsSearching(true);
     setProdsLoading(true);
     searchProducts(q.trim(), pageNum, PAGE_SIZE, false)
-      .then(({ items, hasMore: more }) => {
+      .then(async ({ items, hasMore: more }) => {
         setProducts(items);
         setHasMore(more);
         setPage(pageNum);
-        if (items.length > 0 && priceTypeKey) {
-          const productKeys = items.map((p) => p.Ref_Key);
-          getProductPrices(productKeys, priceTypeKey).then((fetchedPrices) => {
-            setPrices(fetchedPrices);
-            const unitKeys = [...new Set(fetchedPrices.map((p) => p.ЕдиницаИзмерения_Key))];
-            getUnitsByKeys(unitKeys).then((fetchedUnits) => {
-              setUnits(new Map(fetchedUnits.map((u) => [u.Ref_Key, u.Description])));
-            });
-          });
-        } else {
-          setPrices([]);
-          setUnits(new Map());
-        }
+        await applyPricesAndUnits(items);
       })
       .catch((e) => setError(e.message))
       .finally(() => setProdsLoading(false));
-  }, [selectedKey, loadProducts, priceTypeKey]);
+  }, [selectedKey, loadProducts, applyPricesAndUnits]);
 
-  const handleSearchChange = (text: string) => {
+  const handleSearchChange = useCallback((text: string) => {
     setSearchQuery(text);
     if (!text.trim()) {
       setIsSearching(false);
       if (selectedKey) loadProducts(selectedKey, 0);
     }
-  };
+  }, [selectedKey, loadProducts]);
 
-  const handleSearchSubmit = () => doSearch(searchQuery, 0);
+  const handleSearchSubmit = useCallback(() => doSearch(searchQuery, 0), [doSearch, searchQuery]);
 
   const tree = useMemo(() => buildTree(allCategories, id ?? ''), [allCategories, id]);
-  const contentWidth = width * 0.82;
-  const numColumns = Math.max(2, Math.floor(contentWidth / CARD_MIN_WIDTH));
-  const cardWidth = (contentWidth - LIST_PADDING - GAP * (numColumns - 1)) / numColumns;
+
+  const handleSidebarSelect = useCallback((key: string) => {
+    setDrawerOpen(false);
+    handleSelect(key);
+  }, [handleSelect]);
+
+  const { numColumns, cardWidth } = useMemo(() => {
+    const cw = isMobile ? width - 16 : width * 0.82;
+    const cols = Math.max(2, Math.floor(cw / CARD_MIN_WIDTH));
+    return { numColumns: cols, cardWidth: (cw - LIST_PADDING - GAP * (cols - 1)) / cols };
+  }, [isMobile, width]);
 
   if (catsLoading) {
     return (
@@ -329,36 +355,51 @@ export default function CategoryScreen() {
     <View style={styles.container}>
       <AppHeader showBack title={name ?? 'Категорія'} />
 
+      {/* Drawer (mobile) */}
+      {isMobile && (
+        <Modal visible={drawerOpen} transparent animationType="fade" onRequestClose={() => setDrawerOpen(false)}>
+          <View style={styles.drawerOverlay}>
+            <Pressable style={styles.drawerBackdrop} onPress={() => setDrawerOpen(false)} />
+            <BlurView intensity={70} tint="light" style={styles.drawerPanel}>
+              <View style={styles.drawerHeader}>
+                <Text style={styles.drawerTitle}>Підкатегорії</Text>
+                <Pressable onPress={() => setDrawerOpen(false)} hitSlop={8}>
+                  <Ionicons name="close" size={22} color="#475569" />
+                </Pressable>
+              </View>
+              <SidebarContent tree={tree} selectedKey={selectedKey} onSelect={handleSidebarSelect} />
+            </BlurView>
+          </View>
+        </Modal>
+      )}
+
       <View style={styles.body}>
-        {/* Ліва панель */}
-        <View style={styles.sidebar}>
-          <ScrollView>
-            {tree.map((node) => (
-              <CategoryNodeView
-                key={node.category.Ref_Key}
-                node={node}
-                selectedKey={selectedKey}
-                onSelect={handleSelect}
-              />
-            ))}
-            {tree.length === 0 && (
-              <Text style={styles.emptyText}>Немає підкатегорій</Text>
-            )}
-          </ScrollView>
-        </View>
+        {/* Ліва панель — тільки на широких екранах */}
+        {!isMobile && (
+          <View style={styles.sidebar}>
+            <SidebarContent tree={tree} selectedKey={selectedKey} onSelect={handleSidebarSelect} />
+          </View>
+        )}
 
         {/* Права панель */}
         <View style={styles.content}>
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Пошук за назвою або кодом..."
-            placeholderTextColor="#94A3B8"
-            value={searchQuery}
-            onChangeText={handleSearchChange}
-            onSubmitEditing={handleSearchSubmit}
-            returnKeyType="search"
-            clearButtonMode="while-editing"
-          />
+          <View style={styles.searchRow}>
+            {isMobile && (
+              <Pressable style={styles.hamburger} onPress={() => setDrawerOpen(true)}>
+                <Ionicons name="menu" size={22} color="#475569" />
+              </Pressable>
+            )}
+            <TextInput
+              style={[styles.searchInput, isMobile && styles.searchInputFlex]}
+              placeholder="Пошук за назвою або кодом..."
+              placeholderTextColor="#94A3B8"
+              value={searchQuery}
+              onChangeText={handleSearchChange}
+              onSubmitEditing={handleSearchSubmit}
+              returnKeyType="search"
+              clearButtonMode="while-editing"
+            />
+          </View>
           {!selectedKey && !isSearching ? (
             <Text style={styles.emptyText}>Оберіть підкатегорію</Text>
           ) : prodsLoading ? (
@@ -476,12 +517,21 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#E2E8F0',
   },
   treeItemSelected: { backgroundColor: '#DBEAFE' },
-  treeArrow: { fontSize: 10, color: '#94A3B8', marginRight: 4, marginTop: 2, width: 14 },
-  treeLabel: { flex: 1, fontSize: 13, color: '#334155', lineHeight: 18 },
+  treeArrowBtn: { paddingRight: 4, justifyContent: 'center' },
+  treeArrow: { fontSize: 10, color: '#94A3B8', marginTop: 2, width: 14 },
+  treeLabelBtn: { flex: 1 },
+  treeLabel: { fontSize: 13, color: '#334155', lineHeight: 18 },
   treeLabelSelected: { color: '#1D4ED8', fontWeight: '600' },
 
   content: { flex: 1, paddingHorizontal: 8, paddingTop: 8 },
+  searchRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+  hamburger: {
+    width: 36, height: 36, borderRadius: 8,
+    backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E2E8F0',
+    justifyContent: 'center', alignItems: 'center', flexShrink: 0,
+  },
   searchInput: {
+    flex: 1,
     backgroundColor: '#FFFFFF',
     borderRadius: 8,
     paddingVertical: 8,
@@ -490,8 +540,26 @@ const styles = StyleSheet.create({
     color: '#1E293B',
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    marginBottom: 8,
   },
+  searchInputFlex: {},
+
+  // Drawer
+  drawerOverlay: { flex: 1, flexDirection: 'row' },
+  drawerBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },
+  drawerPanel: {
+    width: 280,
+    position: 'absolute',
+    top: 0, left: 0, bottom: 0,
+    overflow: 'hidden',
+  },
+  drawerHeader: {
+    flexDirection: 'row', alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14, paddingVertical: 14,
+    borderBottomWidth: 1, borderBottomColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+  },
+  drawerTitle: { fontSize: 15, fontWeight: '700', color: '#0F172A' },
   toolbar: {
     flexDirection: 'row', alignItems: 'center',
     justifyContent: 'space-between', marginBottom: 8, paddingHorizontal: 4,
@@ -511,18 +579,27 @@ const styles = StyleSheet.create({
 
   // --- List view ---
   rowItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: 'column',
     backgroundColor: '#FFFFFF',
     borderRadius: 8,
     paddingVertical: 8,
     paddingHorizontal: 10,
+    gap: 6,
+  },
+  rowTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 10,
   },
+  rowBottom: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   rowSeparator: { height: 6 },
-  rowImage: { width: 64, height: 64, borderRadius: 6, backgroundColor: '#F8FAFC' },
+  rowImage: { width: 56, height: 56, borderRadius: 6, backgroundColor: '#F8FAFC', flexShrink: 0 },
   rowImagePlaceholder: { justifyContent: 'center', alignItems: 'center', backgroundColor: '#F1F5F9' },
-  rowInfo: { width: 200 },
+  rowInfo: { flex: 1 },
   rowName: { fontSize: 12, color: '#1E293B', fontWeight: '500', lineHeight: 17, marginTop: 2 },
   rowChips: { flex: 1 },
   rowChipsContent: { gap: 5, alignItems: 'center', paddingVertical: 2 },

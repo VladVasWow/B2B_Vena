@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   FlatList,
   Image,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -11,6 +12,8 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { BlurView } from 'expo-blur';
 
 import { useRouter } from 'expo-router';
 import {
@@ -28,11 +31,13 @@ import {
 import { getImageUrl } from '@/constants/api';
 import { AppHeader } from '@/components/AppHeader';
 import { useAuth } from '@/contexts/AuthContext';
+import { effectivePriceTypeKey, PriceType } from '@/services/odata';
 import { ProductCard } from '@/components/ProductCard';
 
 const PAGE_SIZE = 30;
 const GAP = 8;
 const CARD_MIN_WIDTH = 160;
+const MOBILE_BREAKPOINT = 768;
 
 // --- Картка категорії (вибрана) ---
 function FeaturedCategoryCard({ item, onPress }: { item: Category; onPress: () => void }) {
@@ -51,10 +56,11 @@ function FeaturedCategoryCard({ item, onPress }: { item: Category; onPress: () =
 async function loadPricesAndUnits(
   products: Product[],
   priceTypeKey: string,
+  priceType: PriceType | null,
 ): Promise<{ prices: ProductPrice[]; units: Map<string, string> }> {
   if (!products.length || !priceTypeKey) return { prices: [], units: new Map() };
   const productKeys = products.map((p) => p.Ref_Key);
-  const fetchedPrices = await getProductPrices(productKeys, priceTypeKey);
+  const fetchedPrices = await getProductPrices(productKeys, priceTypeKey, priceType);
   const unitKeys = [...new Set(fetchedPrices.map((p) => p.ЕдиницаИзмерения_Key))];
   const fetchedUnits = await getUnitsByKeys(unitKeys);
   return {
@@ -65,10 +71,10 @@ async function loadPricesAndUnits(
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { contract } = useAuth();
+  const { priceType } = useAuth();
   const { width } = useWindowDimensions();
 
-  const priceTypeKey = contract?.ТипЦенПродажи_Key ?? '';
+  const priceTypeKey = effectivePriceTypeKey(priceType);
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [featuredCats, setFeaturedCats] = useState<Category[]>([]);
@@ -86,6 +92,9 @@ export default function HomeScreen() {
   const [searchPage, setSearchPage] = useState(0);
   const [searchLoading, setSearchLoading] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  const isMobile = width < MOBILE_BREAKPOINT;
 
   useEffect(() => {
     Promise.all([
@@ -110,7 +119,7 @@ export default function HomeScreen() {
 
         // Завантажуємо ціни для рекомендованих товарів
         if (fProds.length > 0 && priceTypeKey) {
-          const { prices, units } = await loadPricesAndUnits(fProds, priceTypeKey);
+          const { prices, units } = await loadPricesAndUnits(fProds, priceTypeKey, priceType);
           setFeaturedPrices(prices);
           setFeaturedUnits(units);
         }
@@ -134,7 +143,7 @@ export default function HomeScreen() {
         setSearchResults(items);
         setSearchHasMore(hasMore);
         if (items.length > 0 && priceTypeKey) {
-          const { prices, units } = await loadPricesAndUnits(items, priceTypeKey);
+          const { prices, units } = await loadPricesAndUnits(items, priceTypeKey, priceType);
           setSearchPrices(prices);
           setSearchUnits(units);
         } else {
@@ -160,7 +169,7 @@ export default function HomeScreen() {
   const handleSearchPage = (p: number) => { setSearchPage(p); doSearch(searchQuery, p); };
 
   // Адаптивна сітка для товарів
-  const contentWidth = width * 0.78;
+  const contentWidth = isMobile ? width - 16 : width * 0.78;
   const numColumns = Math.max(2, Math.floor(contentWidth / CARD_MIN_WIDTH));
   const cardWidth = (contentWidth - 16 - GAP * (numColumns - 1)) / numColumns;
 
@@ -182,45 +191,80 @@ export default function HomeScreen() {
     );
   }
 
+  const CategoryList = () => (
+    <ScrollView>
+      {categories.map((item) => (
+        <Pressable
+          key={item.Ref_Key}
+          style={({ pressed }) => [styles.catItem, pressed && styles.catItemPressed]}
+          onPress={() => {
+            setDrawerOpen(false);
+            router.push({ pathname: '/category/[id]', params: { id: item.Ref_Key, name: item.Description } });
+          }}
+        >
+          {(() => {
+            const imgUrl = getImageUrl(item.ОсновноеИзображение?.Ref_Key, item.ОсновноеИзображение?.Формат);
+            return imgUrl
+              ? <Image source={{ uri: imgUrl }} style={styles.catThumb} resizeMode="cover" />
+              : <View style={styles.catThumbPlaceholder} />;
+          })()}
+          <Text style={styles.catName} numberOfLines={3}>{item.Description}</Text>
+        </Pressable>
+      ))}
+    </ScrollView>
+  );
+
   return (
     <View style={styles.container}>
       <AppHeader />
+
+      {/* Drawer (mobile) */}
+      {isMobile && (
+        <Modal visible={drawerOpen} transparent animationType="fade" onRequestClose={() => setDrawerOpen(false)}>
+          <View style={styles.drawerOverlay}>
+            <Pressable style={styles.drawerBackdrop} onPress={() => setDrawerOpen(false)} />
+            <BlurView intensity={70} tint="light" style={styles.drawerPanel}>
+              <View style={styles.drawerHeader}>
+                <Text style={styles.drawerTitle}>Категорії</Text>
+                <Pressable onPress={() => setDrawerOpen(false)} hitSlop={8}>
+                  <Ionicons name="close" size={22} color="#475569" />
+                </Pressable>
+              </View>
+              <CategoryList />
+            </BlurView>
+          </View>
+        </Modal>
+      )}
+
       <View style={styles.body}>
 
-        {/* Ліва панель — категорії */}
-        <View style={styles.sidebar}>
-          <ScrollView>
-            {categories.map((item) => (
-              <Pressable
-                key={item.Ref_Key}
-                style={({ pressed }) => [styles.catItem, pressed && styles.catItemPressed]}
-                onPress={() => router.push({ pathname: '/category/[id]', params: { id: item.Ref_Key, name: item.Description } })}
-              >
-                {(() => {
-                  const imgUrl = getImageUrl(item.ОсновноеИзображение?.Ref_Key, item.ОсновноеИзображение?.Формат);
-                  return imgUrl
-                    ? <Image source={{ uri: imgUrl }} style={styles.catThumb} resizeMode="cover" />
-                    : <View style={styles.catThumbPlaceholder} />;
-                })()}
-                <Text style={styles.catName} numberOfLines={3}>{item.Description}</Text>
-              </Pressable>
-            ))}
-          </ScrollView>
-        </View>
+        {/* Ліва панель — тільки на широких екранах */}
+        {!isMobile && (
+          <View style={styles.sidebar}>
+            <CategoryList />
+          </View>
+        )}
 
         {/* Права панель */}
         <View style={styles.content}>
-          {/* Пошук */}
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Пошук за назвою або кодом..."
-            placeholderTextColor="#94A3B8"
-            value={searchQuery}
-            onChangeText={handleSearchChange}
-            onSubmitEditing={handleSearchSubmit}
-            returnKeyType="search"
-            clearButtonMode="while-editing"
-          />
+          {/* Пошук + гамбургер */}
+          <View style={styles.searchRow}>
+            {isMobile && (
+              <Pressable style={styles.hamburger} onPress={() => setDrawerOpen(true)}>
+                <Ionicons name="menu" size={22} color="#475569" />
+              </Pressable>
+            )}
+            <TextInput
+              style={[styles.searchInput, isMobile && styles.searchInputFlex]}
+              placeholder="Пошук за назвою або кодом..."
+              placeholderTextColor="#94A3B8"
+              value={searchQuery}
+              onChangeText={handleSearchChange}
+              onSubmitEditing={handleSearchSubmit}
+              returnKeyType="search"
+              clearButtonMode="while-editing"
+            />
+          </View>
 
           {isSearching ? (
             searchLoading ? (
@@ -345,7 +389,14 @@ const styles = StyleSheet.create({
 
   // Права панель
   content: { flex: 1, paddingHorizontal: 8, paddingTop: 8 },
+  searchRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
+  hamburger: {
+    width: 36, height: 36, borderRadius: 8,
+    backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E2E8F0',
+    justifyContent: 'center', alignItems: 'center', flexShrink: 0,
+  },
   searchInput: {
+    flex: 1,
     backgroundColor: '#FFFFFF',
     borderRadius: 8,
     paddingVertical: 8,
@@ -354,8 +405,26 @@ const styles = StyleSheet.create({
     color: '#1E293B',
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    marginBottom: 10,
   },
+  searchInputFlex: {},
+
+  // Drawer
+  drawerOverlay: { flex: 1, flexDirection: 'row' },
+  drawerBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },
+  drawerPanel: {
+    width: 280,
+    position: 'absolute',
+    top: 0, left: 0, bottom: 0,
+    overflow: 'hidden',
+  },
+  drawerHeader: {
+    flexDirection: 'row', alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14, paddingVertical: 14,
+    borderBottomWidth: 1, borderBottomColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+  },
+  drawerTitle: { fontSize: 15, fontWeight: '700', color: '#0F172A' },
 
   // Секції
   homeContent: { paddingBottom: 24 },

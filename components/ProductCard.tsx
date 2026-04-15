@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { GestureResponderEvent, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { Product, ProductPrice } from '@/services/odata';
 import { getImageUrl } from '@/constants/api';
 import { useCart } from '@/contexts/CartContext';
@@ -15,6 +16,7 @@ export interface ProductCardProps {
 }
 
 export function ProductCard({ item, width, prices, units, compact = false }: ProductCardProps) {
+  const router = useRouter();
   const { addToCart } = useCart();
   const { isFavorite, toggleFavorite } = useFavorites();
 
@@ -32,25 +34,41 @@ export function ProductCard({ item, width, prices, units, compact = false }: Pro
 
   const selectedPrice = itemPrices.find((p) => p.ЕдиницаИзмерения_Key === effectiveSelected);
 
-  const handleAddToCart = () => {
+  const handleAddToCart = (e: GestureResponderEvent) => {
+    e.stopPropagation();
     if (!effectiveSelected || !selectedPrice) { addToCart(item, '', '', 0); return; }
     addToCart(item, effectiveSelected, units?.get(effectiveSelected) ?? '—', selectedPrice.Цена);
+  };
+
+  const handleToggleFavorite = (e: GestureResponderEvent) => {
+    e.stopPropagation();
+    toggleFavorite(item);
+  };
+
+  const handlePriceSelect = (e: GestureResponderEvent, unitKey: string) => {
+    e.stopPropagation();
+    setSelectedUnitKey(unitKey);
   };
 
   const imgHeight = compact ? 110 : 130;
 
   return (
-    <View style={[styles.card, { width, marginBottom: 8 }]}>
-      <View>
-        {imgUrl ? (
-          <Image source={{ uri: imgUrl }} style={[styles.image, { height: imgHeight }]} resizeMode="contain" />
-        ) : (
-          <View style={[styles.imagePlaceholder, { height: imgHeight }]}>
-            <Text style={styles.noPhoto}>Фото відсутнє</Text>
-          </View>
-        )}
-        <Pressable style={styles.heartBtn} onPress={() => toggleFavorite(item)} hitSlop={6}>
-          <Ionicons name={fav ? 'heart' : 'heart-outline'} size={compact ? 15 : 17} color="#FFFFFF" />
+    <Pressable
+      style={[styles.card, { width, marginBottom: 8 }]}
+      onPress={() => router.push({ pathname: '/product/[id]', params: { id: item.Ref_Key, name: item.Description } })}
+    >
+      <View style={{ position: 'relative' }}>
+        <View style={styles.imageWrap}>
+          {imgUrl ? (
+            <Image source={{ uri: imgUrl }} style={[styles.image, { height: imgHeight }]} resizeMode="contain" />
+          ) : (
+            <View style={[styles.imagePlaceholder, { height: imgHeight }]}>
+              <Text style={styles.noPhoto}>Фото відсутнє</Text>
+            </View>
+          )}
+        </View>
+        <Pressable style={styles.heartBtn} onPress={handleToggleFavorite} hitSlop={6}>
+          <Ionicons name={fav ? 'heart' : 'heart-outline'} size={compact ? 15 : 17} color={fav ? '#EF4444' : '#94A3B8'} />
         </Pressable>
       </View>
 
@@ -68,7 +86,7 @@ export function ProductCard({ item, width, prices, units, compact = false }: Pro
                 <Pressable
                   key={p.ЕдиницаИзмерения_Key}
                   style={[styles.priceRow, isActive && styles.priceRowSelected]}
-                  onPress={() => setSelectedUnitKey(p.ЕдиницаИзмерения_Key)}
+                  onPress={(e) => handlePriceSelect(e, p.ЕдиницаИзмерения_Key)}
                 >
                   <Text style={[styles.priceUnit, isActive && styles.priceUnitSelected]}>
                     {units?.get(p.ЕдиницаИзмерения_Key) ?? '—'}
@@ -86,7 +104,7 @@ export function ProductCard({ item, width, prices, units, compact = false }: Pro
           <Text style={[styles.addBtnText, compact && styles.addBtnTextCompact]}>+ В кошик</Text>
         </Pressable>
       </View>
-    </View>
+    </Pressable>
   );
 }
 
@@ -94,12 +112,16 @@ const styles = StyleSheet.create({
   card: {
     backgroundColor: '#FFFFFF',
     borderRadius: 10,
-    overflow: 'hidden',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.07,
     shadowRadius: 4,
     elevation: 2,
+  },
+  imageWrap: {
+    borderTopLeftRadius: 10,
+    borderTopRightRadius: 10,
+    overflow: 'hidden',
   },
   image: { width: '100%', backgroundColor: '#F8FAFC' },
   imagePlaceholder: {

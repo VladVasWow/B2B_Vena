@@ -1,7 +1,9 @@
+import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { AppHeader } from '@/components/AppHeader';
 import { useAuth } from '@/contexts/AuthContext';
+import { getPriceType } from '@/services/odata';
 
 const CONTRACT_TYPES: Record<string, string> = {
   СПокупателем: 'З покупцем',
@@ -26,9 +28,20 @@ function InfoRow({ label, value }: { label: string; value?: string | null }) {
   );
 }
 
+const NULL_GUID = '00000000-0000-0000-0000-000000000000';
+
 export default function ProfileScreen() {
   const { contractor, contract, priceType, logout } = useAuth();
   const router = useRouter();
+  const [basePriceTypeName, setBasePriceTypeName] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (priceType?.Рассчитывается && priceType.БазовыйТипЦен_Key && priceType.БазовыйТипЦен_Key !== NULL_GUID) {
+      getPriceType(priceType.БазовыйТипЦен_Key).then((pt) => setBasePriceTypeName(pt?.Description ?? null));
+    } else {
+      setBasePriceTypeName(null);
+    }
+  }, [priceType]);
 
   const handleLogout = () => {
     logout();
@@ -72,7 +85,18 @@ export default function ProfileScreen() {
               <InfoRow label="Код" value={contract.Code} />
               <InfoRow label="Вид договору" value={contractTypeLabel(contract.ВидДоговора)} />
               <InfoRow label="Форма оплати" value={paymentFormLabel(contract.ФормаОплаты)} />
-              {priceType && <InfoRow label="Тип цін" value={priceType.Description} />}
+              {priceType && (
+                <>
+                  <InfoRow label="Тип цін" value={priceType.Description} />
+                  <InfoRow
+                    label="Розрахунковий"
+                    value={priceType.Рассчитывается ? 'Так' : 'Ні'}
+                  />
+                  {priceType.Рассчитывается && basePriceTypeName && (
+                    <InfoRow label="Базовий тип цін" value={basePriceTypeName} />
+                  )}
+                </>
+              )}
             </View>
           </>
         )}
