@@ -1,7 +1,7 @@
+import { Image } from 'expo-image';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Image,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -21,12 +21,14 @@ import { useAuth } from '@/contexts/AuthContext';
 import { effectivePriceTypeKey } from '@/services/odata';
 import { useCart } from '@/contexts/CartContext';
 import { useFavorites } from '@/contexts/FavoritesContext';
+import { useToast } from '@/contexts/ToastContext';
 
 export default function ProductScreen() {
   const { id, name } = useLocalSearchParams<{ id: string; name?: string }>();
   const { priceType } = useAuth();
   const { addToCart } = useCart();
   const { isFavorite, toggleFavorite } = useFavorites();
+  const { showToast } = useToast();
 
   const priceTypeKey = effectivePriceTypeKey(priceType);
 
@@ -98,6 +100,7 @@ export default function ProductScreen() {
       effectiveSelected ? (units.get(effectiveSelected) ?? '—') : '',
       selectedPrice?.Цена ?? 0,
     );
+    showToast('Додано до кошику');
     setAdded(true);
     const t = setTimeout(() => setAdded(false), 1500);
     return () => clearTimeout(t);
@@ -140,7 +143,7 @@ export default function ProductScreen() {
         {/* Зображення */}
         <View style={styles.imageWrap}>
           {imgUrl ? (
-            <Image source={{ uri: imgUrl }} style={styles.image} resizeMode="contain" />
+            <Image source={{ uri: imgUrl }} style={styles.image} contentFit="contain" cachePolicy="memory-disk" />
           ) : (
             <View style={styles.imagePlaceholder}>
               <Ionicons name="image-outline" size={48} color="#CBD5E1" />

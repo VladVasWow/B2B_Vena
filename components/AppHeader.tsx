@@ -28,12 +28,12 @@ export function AppHeader({ showBack, title }: AppHeaderProps) {
             ) : null}
           </Pressable>
         ) : (
-          <View style={styles.logoRow}>
+          <Pressable style={styles.logoRow} onPress={() => router.replace('/(tabs)')} hitSlop={8}>
             <View style={styles.logoCircle}>
               <Text style={styles.logoLetter}>В</Text>
             </View>
             <Text style={styles.logoName}>Vena <Text style={styles.logoB2B}>B2B</Text></Text>
-          </View>
+          </Pressable>
         )}
       </View>
 

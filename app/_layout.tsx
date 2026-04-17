@@ -5,6 +5,7 @@ import { StatusBar } from 'expo-status-bar';
 import { CartProvider } from '@/contexts/CartContext';
 import { FavoritesProvider } from '@/contexts/FavoritesContext';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
+import { ToastProvider } from '@/contexts/ToastContext';
 
 const MAX_WIDTH = 1600;
 
@@ -49,17 +50,19 @@ export default function RootLayout() {
     <AuthProvider>
       <CartProvider>
         <FavoritesProvider>
-          <View style={styles.outer}>
-            <View style={styles.inner}>
-              <AuthGuard>
-                <Stack>
-                  <Stack.Screen name="login" options={{ headerShown: false }} />
-                  <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-                </Stack>
-              </AuthGuard>
-              <StatusBar style="dark" />
+          <ToastProvider>
+            <View style={styles.outer}>
+              <View style={styles.inner}>
+                <AuthGuard>
+                  <Stack>
+                    <Stack.Screen name="login" options={{ headerShown: false }} />
+                    <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+                  </Stack>
+                </AuthGuard>
+                <StatusBar style="dark" />
+              </View>
             </View>
-          </View>
+          </ToastProvider>
         </FavoritesProvider>
       </CartProvider>
     </AuthProvider>

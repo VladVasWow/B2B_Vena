@@ -1,8 +1,8 @@
+import { Image } from 'expo-image';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
-  Image,
   Pressable,
   StyleSheet,
   Text,
@@ -14,6 +14,7 @@ import { AppHeader } from '@/components/AppHeader';
 import { useFavorites } from '@/contexts/FavoritesContext';
 import { useCart } from '@/contexts/CartContext';
 import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/contexts/ToastContext';
 import { effectivePriceTypeKey } from '@/services/odata';
 import { getProductPrices, getUnitsByKeys, Product, ProductPrice } from '@/services/odata';
 import { getImageUrl } from '@/constants/api';
@@ -54,7 +55,7 @@ function FavCard({ item, width, prices, units, onAddToCart, onRemove }: FavCardP
     <View style={[styles.card, { width, marginBottom: GAP }]}>
       <View style={{ position: 'relative' }}>
         {imgUrl ? (
-          <Image source={{ uri: imgUrl }} style={styles.cardImage} resizeMode="contain" />
+          <Image source={{ uri: imgUrl }} style={styles.cardImage} contentFit="contain" cachePolicy="memory-disk" />
         ) : (
           <View style={styles.cardImagePlaceholder}>
             <Text style={styles.noPhoto}>Фото відсутнє</Text>
@@ -104,6 +105,7 @@ export default function FavoritesScreen() {
   const { favorites, removeFromFavorites } = useFavorites();
   const { addToCart } = useCart();
   const { priceType } = useAuth();
+  const { showToast } = useToast();
   const { width } = useWindowDimensions();
 
   const priceTypeKey = effectivePriceTypeKey(priceType);
@@ -164,7 +166,7 @@ export default function FavoritesScreen() {
               width={cardWidth}
               prices={prices}
               units={units}
-              onAddToCart={addToCart}
+              onAddToCart={(p, unitKey, unitName, price) => { addToCart(p, unitKey, unitName, price); showToast('Додано до кошику'); }}
               onRemove={removeFromFavorites}
             />
           )}

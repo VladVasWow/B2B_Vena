@@ -134,12 +134,39 @@ async function odataPost<T>(resource: string, body: Record<string, unknown>): Pr
 }
 
 
+// --- Кеш категорій ---
+// Категорії змінюються рідко — кешуємо на 30 хвилин у пам'яті процесу
+
+const CATEGORY_TTL = 30 * 60 * 1000; // 30 хвилин
+
+interface CacheEntry<T> {
+  data: T;
+  expiresAt: number;
+}
+
+const categoryCache = new Map<string, CacheEntry<Category[]>>();
+
+function getCached(key: string): Category[] | null {
+  const entry = categoryCache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) { categoryCache.delete(key); return null; }
+  return entry.data;
+}
+
+function setCached(key: string, data: Category[]): void {
+  categoryCache.set(key, { data, expiresAt: Date.now() + CATEGORY_TTL });
+}
+
+
 // --- API методи ---
 
 const NULL_GUID = '00000000-0000-0000-0000-000000000000';
 
 // Топ-рівень категорій (Parent_Key = null guid)
 export async function getTopCategories(): Promise<Category[]> {
+  const cached = getCached('__top__');
+  if (cached) return cached;
+
   const data = await odataGet<ODataList<Category>>('Catalog_КатегорииТоваров', {
     '$filter': `ИспользуетВебСайт eq true and Parent_Key eq guid'${NULL_GUID}'`,
     '$select': 'Ref_Key,Code,Description,Parent_Key,ОсновноеИзображение_Key,ОсновноеИзображение/Ref_Key,ОсновноеИзображение/Формат',
@@ -147,23 +174,61 @@ export async function getTopCategories(): Promise<Category[]> {
     '$orderby': 'Description',
     '$format': 'json',
   });
+  setCached('__top__', data.value);
   return data.value;
 }
 
-// Всі категорії — фільтр по КорневаяКатегория_Key клієнтсайд (в OData викликає AUTOORDER)
-export async function getAllCategories(): Promise<Category[]> {
+// Підкатегорії по кореневій категорії — серверний фільтр по КорневаяКатегория_Key
+export async function getAllCategories(rootKey: string): Promise<Category[]> {
+  const cached = getCached(rootKey);
+  if (cached) return cached;
+
   const data = await odataGet<ODataList<Category>>('Catalog_КатегорииТоваров', {
+    '$filter': `КорневаяКатегория_Key eq guid'${rootKey}'`,
     '$select': 'Ref_Key,Code,Description,Parent_Key,КорневаяКатегория_Key,ОсновноеИзображение_Key,ОсновноеИзображение/Ref_Key,ОсновноеИзображение/Формат',
     '$expand': 'ОсновноеИзображение',
     '$orderby': 'Description',
     '$format': 'json',
   });
+  setCached(rootKey, data.value);
   return data.value;
 }
 
 export interface ProductsResult {
   items: Product[];
   hasMore: boolean;
+}
+
+// Всі товари кореневої категорії з пагінацією (через expand Категория)
+export async function getProductsByRootCategory(rootKey: string, page = 0, pageSize = 30): Promise<ProductsResult> {
+  const data = await odataGet<ODataList<Product>>('Catalog_Номенклатура', {
+    '$filter': `IsFolder eq false and DeletionMark eq false and ИспользуетВебСайт eq true and Категория/КорневаяКатегория_Key eq guid'${rootKey}'`,
+    '$select': 'Ref_Key,Code,Description,Артикул,Категория_Key,СтавкаНДС,ОсновноеИзображение/Ref_Key,ОсновноеИзображение/Формат',
+    '$expand': 'ОсновноеИзображение,Категория',
+    '$top': String(pageSize + 1),
+    '$skip': String(page * pageSize),
+    '$format': 'json',
+  });
+  const hasMore = data.value.length > pageSize;
+  return { items: data.value.slice(0, pageSize), hasMore };
+}
+
+// Товари по одній або кількох категоріях (листові нащадки) з пагінацією
+export async function getProductsByCategories(categoryKeys: string[], page = 0, pageSize = 30): Promise<ProductsResult> {
+  const keyFilter = categoryKeys.length === 1
+    ? `Категория_Key eq guid'${categoryKeys[0]}'`
+    : `(${categoryKeys.map((k) => `Категория_Key eq guid'${k}'`).join(' or ')})`;
+
+  const data = await odataGet<ODataList<Product>>('Catalog_Номенклатура', {
+    '$filter': `IsFolder eq false and DeletionMark eq false and ИспользуетВебСайт eq true and ${keyFilter}`,
+    '$select': 'Ref_Key,Code,Description,Артикул,Категория_Key,СтавкаНДС,ОсновноеИзображение/Ref_Key,ОсновноеИзображение/Формат',
+    '$expand': 'ОсновноеИзображение',
+    '$top': String(pageSize + 1),
+    '$skip': String(page * pageSize),
+    '$format': 'json',
+  });
+  const hasMore = data.value.length > pageSize;
+  return { items: data.value.slice(0, pageSize), hasMore };
 }
 
 // Товари по підкатегорії з пагінацією та загальною кількістю

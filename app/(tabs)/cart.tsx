@@ -2,7 +2,9 @@ import { useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  Modal,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -12,28 +14,41 @@ import { Ionicons } from '@expo/vector-icons';
 import { AppHeader } from '@/components/AppHeader';
 import { useCart, cartItemId } from '@/contexts/CartContext';
 import { useAuth } from '@/contexts/AuthContext';
-import { createOrder } from '@/services/odata';
+import { createOrder, getProductPrices, effectivePriceTypeKey } from '@/services/odata';
+import { useToast } from '@/contexts/ToastContext';
+
+interface PriceChange {
+  productKey: string;
+  unitKey: string;
+  productName: string;
+  unitName: string;
+  oldPrice: number;
+  newPrice: number;
+}
 
 export default function CartScreen() {
-  const { items, removeFromCart, updateQuantity, clearCart, itemCount, totalAmount } = useCart();
+  const { items, removeFromCart, updateQuantity, updateItemPrice, clearCart, itemCount, totalAmount } = useCart();
   const { contractor, contract, priceType } = useAuth();
+  const { showToast } = useToast();
   const router = useRouter();
 
   const [ordering, setOrdering] = useState(false);
   const [orderError, setOrderError] = useState<string | null>(null);
+  const [priceChanges, setPriceChanges] = useState<PriceChange[]>([]);
+  const [showPriceModal, setShowPriceModal] = useState(false);
 
-  const handleOrder = async () => {
-    if (!contractor || !contract || !items.length) return;
+  const submitOrder = async (currentItems: typeof items) => {
+    if (!contractor || !contract) return;
     setOrdering(true);
     setOrderError(null);
     try {
-      const docKey = await createOrder({
+      await createOrder({
         contractorKey: contractor.Ref_Key,
         contractKey: contract.Ref_Key,
         priceTypeKey: priceType?.Ref_Key ?? contract.ТипЦенПродажи_Key,
         currencyKey: contract.ВалютаВзаиморасчетов_Key,
         comment: '',
-        items: items.map((i) => ({
+        items: currentItems.map((i) => ({
           productKey: i.product.Ref_Key,
           unitKey: i.unitKey,
           quantity: i.quantity,
@@ -42,12 +57,71 @@ export default function CartScreen() {
         })),
       });
       clearCart();
+      showToast('Замовлення успішно створено');
       router.replace('/(tabs)/orders');
     } catch (e) {
       setOrderError((e as Error).message);
     } finally {
       setOrdering(false);
     }
+  };
+
+  const handleOrder = async () => {
+    if (!contractor || !contract || !items.length) return;
+    const priceTypeKey = effectivePriceTypeKey(priceType);
+    if (!priceTypeKey) { await submitOrder(items); return; }
+
+    setOrdering(true);
+    setOrderError(null);
+    try {
+      const productKeys = items.map((i) => i.product.Ref_Key);
+      const freshPrices = await getProductPrices(productKeys, priceTypeKey, priceType);
+
+      const changes: PriceChange[] = [];
+      for (const item of items) {
+        if (item.price === 0) continue; // товар без ціни — не перевіряємо
+        const fresh = freshPrices.find(
+          (p) => p.Номенклатура_Key === item.product.Ref_Key && p.ЕдиницаИзмерения_Key === item.unitKey
+        );
+        if (fresh && Math.abs(fresh.Цена - item.price) > 0.001) {
+          changes.push({
+            productKey: item.product.Ref_Key,
+            unitKey: item.unitKey,
+            productName: item.product.Description,
+            unitName: item.unitName,
+            oldPrice: item.price,
+            newPrice: fresh.Цена,
+          });
+        }
+      }
+
+      if (changes.length > 0) {
+        setPriceChanges(changes);
+        setShowPriceModal(true);
+        setOrdering(false);
+      } else {
+        await submitOrder(items);
+      }
+    } catch {
+      // якщо не вдалось перевірити ціни — оформляємо з поточними
+      await submitOrder(items);
+    }
+  };
+
+  const handleConfirmWithNewPrices = async () => {
+    setShowPriceModal(false);
+    // оновлюємо ціни в кошику
+    for (const ch of priceChanges) {
+      updateItemPrice(ch.productKey, ch.unitKey, ch.newPrice);
+    }
+    // items ще не оновлені (стан асинхронний), тому будуємо оновлений список вручну
+    const updatedItems = items.map((i) => {
+      const ch = priceChanges.find(
+        (c) => c.productKey === i.product.Ref_Key && c.unitKey === i.unitKey
+      );
+      return ch ? { ...i, price: ch.newPrice } : i;
+    });
+    await submitOrder(updatedItems);
   };
 
   return (
@@ -149,6 +223,54 @@ export default function CartScreen() {
           </View>
         </>
       )}
+
+      {/* Модальне вікно зміни цін */}
+      <Modal visible={showPriceModal} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalBox}>
+            <View style={styles.modalHeader}>
+              <Ionicons name="alert-circle" size={24} color="#F59E0B" />
+              <Text style={styles.modalTitle}>Ціни змінились</Text>
+            </View>
+            <Text style={styles.modalSubtitle}>
+              З моменту додавання до кошику ціни на деякі товари змінились:
+            </Text>
+            <ScrollView style={styles.changesList} showsVerticalScrollIndicator={false}>
+              {priceChanges.map((ch) => (
+                <View key={`${ch.productKey}_${ch.unitKey}`} style={styles.changeRow}>
+                  <Text style={styles.changeName} numberOfLines={2}>{ch.productName}</Text>
+                  <View style={styles.changePrices}>
+                    <Text style={styles.changeOld}>{ch.oldPrice.toFixed(2)} грн</Text>
+                    <Ionicons name="arrow-forward" size={14} color="#64748B" />
+                    <Text style={[
+                      styles.changeNew,
+                      ch.newPrice > ch.oldPrice ? styles.priceUp : styles.priceDown,
+                    ]}>
+                      {ch.newPrice.toFixed(2)} грн
+                    </Text>
+                    <Text style={styles.changeUnit}>/{ch.unitName || 'од.'}</Text>
+                  </View>
+                </View>
+              ))}
+            </ScrollView>
+            <Text style={styles.modalQuestion}>Оновити ціни і оформити замовлення?</Text>
+            <View style={styles.modalBtns}>
+              <Pressable
+                style={[styles.modalBtn, styles.modalBtnCancel]}
+                onPress={() => setShowPriceModal(false)}
+              >
+                <Text style={styles.modalBtnCancelText}>Скасувати</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.modalBtn, styles.modalBtnConfirm]}
+                onPress={handleConfirmWithNewPrices}
+              >
+                <Text style={styles.modalBtnConfirmText}>Так, продовжити</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -220,4 +342,38 @@ const styles = StyleSheet.create({
   },
   orderBtnText: { fontSize: 14, color: '#FFFFFF', fontWeight: '700' },
   btnDisabled: { opacity: 0.6 },
+
+  // Модальне вікно
+  modalOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center', alignItems: 'center',
+    padding: 24,
+  },
+  modalBox: {
+    backgroundColor: '#FFFFFF', borderRadius: 16,
+    padding: 20, width: '100%', maxWidth: 480, gap: 12,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.15, shadowRadius: 24, elevation: 10,
+  },
+  modalHeader: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  modalTitle: { fontSize: 17, fontWeight: '700', color: '#0F172A' },
+  modalSubtitle: { fontSize: 13, color: '#64748B', lineHeight: 18 },
+  changesList: { maxHeight: 240 },
+  changeRow: {
+    paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#F1F5F9', gap: 4,
+  },
+  changeName: { fontSize: 13, color: '#1E293B', fontWeight: '500', lineHeight: 18 },
+  changePrices: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  changeOld: { fontSize: 13, color: '#94A3B8', textDecorationLine: 'line-through' },
+  changeNew: { fontSize: 14, fontWeight: '700' },
+  changeUnit: { fontSize: 12, color: '#94A3B8' },
+  priceUp: { color: '#EF4444' },
+  priceDown: { color: '#059669' },
+  modalQuestion: { fontSize: 14, fontWeight: '600', color: '#334155', marginTop: 4 },
+  modalBtns: { flexDirection: 'row', gap: 10, marginTop: 4 },
+  modalBtn: { flex: 1, paddingVertical: 12, borderRadius: 8, alignItems: 'center' },
+  modalBtnCancel: { borderWidth: 1, borderColor: '#CBD5E1' },
+  modalBtnCancelText: { fontSize: 14, color: '#64748B', fontWeight: '600' },
+  modalBtnConfirm: { backgroundColor: '#2563EB' },
+  modalBtnConfirmText: { fontSize: 14, color: '#FFFFFF', fontWeight: '700' },
 });

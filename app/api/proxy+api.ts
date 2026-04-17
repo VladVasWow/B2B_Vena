@@ -2,8 +2,12 @@
 // GET:  /api/proxy?path=<resource>&<odata-params>
 // POST: /api/proxy?path=<resource>  body=JSON
 
-const BASE = 'https://1csync.mailcn.com.ua:9443/VenaCentr/odata/standard.odata';
-const CREDENTIALS = Buffer.from('website:ty4hD65G7T').toString('base64');
+const BASE =
+  process.env.ODATA_BASE_URL ??
+  'https://1csync.mailcn.com.ua:9443/VenaCentr/odata/standard.odata';
+const CREDENTIALS = Buffer.from(
+  `${process.env.ODATA_LOGIN ?? 'website'}:${process.env.ODATA_PASSWORD ?? 'ty4hD65G7T'}`
+).toString('base64');
 
 export async function GET(request: Request) {
   const url = new URL(request.url);

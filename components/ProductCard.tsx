@@ -1,15 +1,17 @@
 import { useState } from 'react';
-import { GestureResponderEvent, Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { GestureResponderEvent, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { Product, ProductPrice } from '@/services/odata';
 import { getImageUrl } from '@/constants/api';
 import { useCart } from '@/contexts/CartContext';
 import { useFavorites } from '@/contexts/FavoritesContext';
+import { useToast } from '@/contexts/ToastContext';
 
 export interface ProductCardProps {
   item: Product;
-  width: number;
+  width?: number; // якщо не передано — карточка розтягується на всю доступну ширину (flex: 1)
   prices?: ProductPrice[];
   units?: Map<string, string>;
   compact?: boolean; // менші розміри для головної сторінки
@@ -19,6 +21,7 @@ export function ProductCard({ item, width, prices, units, compact = false }: Pro
   const router = useRouter();
   const { addToCart } = useCart();
   const { isFavorite, toggleFavorite } = useFavorites();
+  const { showToast } = useToast();
 
   const imgUrl = getImageUrl(item.ОсновноеИзображение?.Ref_Key, item.ОсновноеИзображение?.Формат);
   const itemPrices = prices?.filter((p) => p.Номенклатура_Key === item.Ref_Key) ?? [];
@@ -36,8 +39,13 @@ export function ProductCard({ item, width, prices, units, compact = false }: Pro
 
   const handleAddToCart = (e: GestureResponderEvent) => {
     e.stopPropagation();
-    if (!effectiveSelected || !selectedPrice) { addToCart(item, '', '', 0); return; }
+    if (!effectiveSelected || !selectedPrice) {
+      addToCart(item, '', '', 0);
+      showToast('Додано до кошику');
+      return;
+    }
     addToCart(item, effectiveSelected, units?.get(effectiveSelected) ?? '—', selectedPrice.Цена);
+    showToast(`${item.Description.slice(0, 40)}${item.Description.length > 40 ? '…' : ''} — додано до кошику`);
   };
 
   const handleToggleFavorite = (e: GestureResponderEvent) => {
@@ -54,13 +62,13 @@ export function ProductCard({ item, width, prices, units, compact = false }: Pro
 
   return (
     <Pressable
-      style={[styles.card, { width, marginBottom: 8 }]}
+      style={[styles.card, width != null ? { width, marginBottom: 8 } : { flex: 1, marginBottom: 8 }]}
       onPress={() => router.push({ pathname: '/product/[id]', params: { id: item.Ref_Key, name: item.Description } })}
     >
       <View style={{ position: 'relative' }}>
         <View style={styles.imageWrap}>
           {imgUrl ? (
-            <Image source={{ uri: imgUrl }} style={[styles.image, { height: imgHeight }]} resizeMode="contain" />
+            <Image source={{ uri: imgUrl }} style={[styles.image, { height: imgHeight }]} contentFit="contain" cachePolicy="memory-disk" />
           ) : (
             <View style={[styles.imagePlaceholder, { height: imgHeight }]}>
               <Text style={styles.noPhoto}>Фото відсутнє</Text>

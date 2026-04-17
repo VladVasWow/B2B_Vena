@@ -17,7 +17,7 @@ import { getOrders, Order } from '@/services/odata';
 const PAGE_SIZE = 20;
 
 function resolveStatus(o: Order): { label: string; bg: string; text: string } {
-  if (!o.Posted)        return { label: 'Чорновик',           bg: '#F1F5F9', text: '#64748B' };
+  if (!o.Posted)        return { label: 'Чернетка',           bg: '#F1F5F9', text: '#64748B' };
   if (!o.Утвержден)     return { label: 'Не погоджено',       bg: '#FEFCE8', text: '#CA8A04' };
   if (o.ЕстьРасход)     return { label: 'Відвантажено',       bg: '#ECFDF5', text: '#059669' };
   if (o.ЕстьСчет)       return { label: 'Рахунок виставлено', bg: '#F5F3FF', text: '#7C3AED' };

@@ -1,8 +1,8 @@
+import { Image } from 'expo-image';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
-  Image,
   Modal,
   Pressable,
   ScrollView,
@@ -45,7 +45,7 @@ function FeaturedCategoryCard({ item, onPress }: { item: Category; onPress: () =
   return (
     <Pressable style={({ pressed }) => [styles.featCatCard, pressed && { opacity: 0.75 }]} onPress={onPress}>
       {imgUrl
-        ? <Image source={{ uri: imgUrl }} style={styles.featCatImage} resizeMode="cover" />
+        ? <Image source={{ uri: imgUrl }} style={styles.featCatImage} contentFit="cover" cachePolicy="memory-disk" />
         : <View style={styles.featCatImagePlaceholder} />}
       <Text style={styles.featCatName} numberOfLines={2}>{item.Description}</Text>
     </Pressable>
@@ -96,12 +96,15 @@ export default function HomeScreen() {
 
   const isMobile = width < MOBILE_BREAKPOINT;
 
+  // Ефект 1: завантаження категорій та рекомендованих товарів — один раз при mount
   useEffect(() => {
+    let cancelled = false;
     Promise.all([
       getTopCategories(),
       getHomePageItems(),
     ])
       .then(async ([cats, items]) => {
+        if (cancelled) return;
         setCategories(cats);
         const catKeys = items
           .filter((i) => i.Элемент_Type === 'StandardODATA.Catalog_КатегорииТоваров')
@@ -114,19 +117,28 @@ export default function HomeScreen() {
           getCategoriesByKeys(catKeys),
           getProductsByKeys(prodKeys),
         ]);
+        if (cancelled) return;
         setFeaturedCats(fCats);
         setFeaturedProds(fProds);
-
-        // Завантажуємо ціни для рекомендованих товарів
-        if (fProds.length > 0 && priceTypeKey) {
-          const { prices, units } = await loadPricesAndUnits(fProds, priceTypeKey, priceType);
-          setFeaturedPrices(prices);
-          setFeaturedUnits(units);
-        }
       })
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, [priceTypeKey]);
+      .catch((e) => { if (!cancelled) setError(e.message); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Ефект 2: завантаження цін — коли з'явився priceTypeKey або змінились рекомендовані товари
+  useEffect(() => {
+    if (!priceTypeKey || featuredProds.length === 0) return;
+    let cancelled = false;
+    loadPricesAndUnits(featuredProds, priceTypeKey, priceType)
+      .then(({ prices, units }) => {
+        if (cancelled) return;
+        setFeaturedPrices(prices);
+        setFeaturedUnits(units);
+      })
+      .catch((e) => { if (!cancelled) setError(e.message); });
+    return () => { cancelled = true; };
+  }, [priceTypeKey, featuredProds]);
 
   const doSearch = (q: string, page: number) => {
     if (q.trim().length < 2) {
@@ -171,7 +183,6 @@ export default function HomeScreen() {
   // Адаптивна сітка для товарів
   const contentWidth = isMobile ? width - 16 : width * 0.78;
   const numColumns = Math.max(2, Math.floor(contentWidth / CARD_MIN_WIDTH));
-  const cardWidth = (contentWidth - 16 - GAP * (numColumns - 1)) / numColumns;
 
   if (loading) {
     return (
@@ -205,7 +216,7 @@ export default function HomeScreen() {
           {(() => {
             const imgUrl = getImageUrl(item.ОсновноеИзображение?.Ref_Key, item.ОсновноеИзображение?.Формат);
             return imgUrl
-              ? <Image source={{ uri: imgUrl }} style={styles.catThumb} resizeMode="cover" />
+              ? <Image source={{ uri: imgUrl }} style={styles.catThumb} contentFit="cover" cachePolicy="memory-disk" />
               : <View style={styles.catThumbPlaceholder} />;
           })()}
           <Text style={styles.catName} numberOfLines={3}>{item.Description}</Text>
@@ -279,15 +290,11 @@ export default function HomeScreen() {
                   keyExtractor={(item) => item.Ref_Key}
                   key={numColumns}
                   numColumns={numColumns}
-                  columnWrapperStyle={numColumns > 1 ? { gap: GAP } : undefined}
+                  columnWrapperStyle={undefined}
                   renderItem={({ item }) => (
-                    <ProductCard
-                      item={item}
-                      width={cardWidth}
-                      prices={searchPrices}
-                      units={searchUnits}
-                      compact
-                    />
+                    <View style={{ width: `${(100 / numColumns).toFixed(3)}%`, paddingHorizontal: GAP / 2 }}>
+                      <ProductCard item={item} prices={searchPrices} units={searchUnits} compact />
+                    </View>
                   )}
                   contentContainerStyle={styles.productList}
                   ListEmptyComponent={<Text style={styles.emptyText}>Нічого не знайдено</Text>}
@@ -338,14 +345,9 @@ export default function HomeScreen() {
                   <Text style={styles.sectionTitle}>Рекомендовані товари</Text>
                   <View style={[styles.productGrid, { gap: GAP }]}>
                     {featuredProds.map((prod) => (
-                      <ProductCard
-                        key={prod.Ref_Key}
-                        item={prod}
-                        width={cardWidth}
-                        prices={featuredPrices}
-                        units={featuredUnits}
-                        compact
-                      />
+                      <View key={prod.Ref_Key} style={{ flex: 1, minWidth: CARD_MIN_WIDTH, maxWidth: '50%' }}>
+                        <ProductCard item={prod} prices={featuredPrices} units={featuredUnits} compact />
+                      </View>
                     ))}
                   </View>
                 </View>

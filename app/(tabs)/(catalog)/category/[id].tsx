@@ -1,8 +1,8 @@
+import { Image } from 'expo-image';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
-  Image,
   Modal,
   Pressable,
   ScrollView,
@@ -15,7 +15,7 @@ import {
 import { useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
-import { getProducts, searchProducts, getAllCategories, getProductPrices, getUnitsByKeys, Category, Product, ProductPrice, Unit } from '@/services/odata';
+import { getProducts, getProductsByCategories, getProductsByRootCategory, searchProducts, getAllCategories, getProductPrices, getUnitsByKeys, Category, Product, ProductPrice, Unit } from '@/services/odata';
 import { getImageUrl } from '@/constants/api';
 import { AppHeader } from '@/components/AppHeader';
 import { useCart } from '@/contexts/CartContext';
@@ -30,11 +30,22 @@ const LIST_PADDING = 16;
 const PAGE_SIZE = 30;
 const MOBILE_BREAKPOINT = 768;
 
+const NEXT_PAGE_SENTINEL = '__next_page__';
+type GridItem = Product | { Ref_Key: typeof NEXT_PAGE_SENTINEL };
+
 // --- Дерево категорій ---
 
 interface CategoryNode {
   category: Category;
   children: CategoryNode[];
+}
+
+// Повертає ключі всіх листових нащадків (категорій без дітей)
+// Якщо сама категорія — лист, повертає [key]
+function getLeafKeys(key: string, allCats: Category[]): string[] {
+  const children = allCats.filter((c) => c.Parent_Key === key);
+  if (children.length === 0) return [key];
+  return children.flatMap((c) => getLeafKeys(c.Ref_Key, allCats));
 }
 
 function buildTree(categories: Category[], parentKey: string): CategoryNode[] {
@@ -54,7 +65,7 @@ interface CategoryNodeProps {
 }
 
 function CategoryNodeView({ node, selectedKey, onSelect, depth = 0 }: CategoryNodeProps) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true);
   const hasChildren = node.children.length > 0;
   const isSelected = selectedKey === node.category.Ref_Key;
 
@@ -126,7 +137,7 @@ function ProductRow({ item, prices, units }: ProductRowProps) {
       {/* Рядок 1: фото + код/назва + серце */}
       <View style={styles.rowTop}>
         {imgUrl ? (
-          <Image source={{ uri: imgUrl }} style={styles.rowImage} resizeMode="contain" />
+          <Image source={{ uri: imgUrl }} style={styles.rowImage} contentFit="contain" cachePolicy="memory-disk" />
         ) : (
           <View style={[styles.rowImage, styles.rowImagePlaceholder]}>
             <Text style={styles.productImageNoPhoto}>—</Text>
@@ -185,11 +196,24 @@ interface SidebarContentProps {
   tree: CategoryNode[];
   selectedKey: string | null;
   onSelect: (key: string) => void;
+  rootId: string;
+  rootName: string;
 }
 
-function SidebarContent({ tree, selectedKey, onSelect }: SidebarContentProps) {
+function SidebarContent({ tree, selectedKey, onSelect, rootId, rootName }: SidebarContentProps) {
+  const isRootSelected = selectedKey === rootId;
   return (
     <ScrollView>
+      {/* Корінь — всі товари категорії */}
+      <Pressable
+        style={[styles.treeItem, styles.treeRootItem, isRootSelected && styles.treeItemSelected]}
+        onPress={() => onSelect(rootId)}
+      >
+        <Text style={[styles.treeLabel, styles.treeRootLabel, isRootSelected && styles.treeLabelSelected]} numberOfLines={2}>
+          Всі товари: {rootName}
+        </Text>
+      </Pressable>
+
       {(tree ?? []).map((node) => (
         <CategoryNodeView
           key={node.category.Ref_Key}
@@ -198,9 +222,6 @@ function SidebarContent({ tree, selectedKey, onSelect }: SidebarContentProps) {
           onSelect={onSelect}
         />
       ))}
-      {tree.length === 0 && (
-        <Text style={styles.emptyText}>Немає підкатегорій</Text>
-      )}
     </ScrollView>
   );
 }
@@ -233,11 +254,10 @@ export default function CategoryScreen() {
   const [units, setUnits] = useState<Map<string, string>>(new Map());
   const priceTypeKey = effectivePriceTypeKey(priceType);
 
-  // Завантаження категорій + скидання стану при зміні кореневої категорії
+  // Завантаження категорій + автовибір кореня при зміні кореневої категорії
   useEffect(() => {
     if (!id) return;
-    // скидаємо всі залежні стани
-    setSelectedKey(null);
+    setSelectedKey(id); // автоматично вибираємо "Всі товари"
     setProducts([]);
     setPrices([]);
     setUnits(new Map());
@@ -247,16 +267,15 @@ export default function CategoryScreen() {
     setError(null);
 
     setCatsLoading(true);
-    getAllCategories()
-      .then((cats) => {
-        const rootCats = cats.filter(
-          (c) => c.КорневаяКатегория_Key === id || c.Parent_Key === id
-        );
-        setAllCategories(rootCats);
-      })
+    getAllCategories(id)
+      .then((cats) => setAllCategories(cats))
       .catch((e) => setError(e.message))
       .finally(() => setCatsLoading(false));
-  }, [id]);
+
+    // Завантажуємо товари кореневої категорії одразу
+    // loadProducts навмисно не в deps — ефект має спрацьовувати лише при зміні id
+    loadProducts(id, 0); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Спільний хелпер завантаження цін та одиниць — не залежить від інших useCallback
   const applyPricesAndUnits = useCallback(async (items: Product[]) => {
@@ -270,18 +289,34 @@ export default function CategoryScreen() {
   }, [priceTypeKey, priceType]);
 
   // Завантаження товарів при виборі категорії або зміні сторінки
+  // - корінь (key === id): всі товари через КорневаяКатегория_Key
+  // - підкатегорія з дітьми: фільтр по листових нащадках через or
+  // - листова підкатегорія: звичайний фільтр по одній категорії
   const loadProducts = useCallback((key: string, pageNum: number) => {
     setProdsLoading(true);
     setError(null);
-    getProducts(key, pageNum, PAGE_SIZE)
+    let fetcher: Promise<{ items: Product[]; hasMore: boolean }>;
+    if (key === id) {
+      fetcher = getProductsByRootCategory(key, pageNum, PAGE_SIZE);
+    } else {
+      const leafKeys = getLeafKeys(key, allCategories);
+      fetcher = getProductsByCategories(leafKeys, pageNum, PAGE_SIZE);
+    }
+    fetcher
       .then(async ({ items, hasMore: more }) => {
         setProducts(items);
         setHasMore(more);
         await applyPricesAndUnits(items);
       })
-      .catch((e) => setError(e.message))
+      .catch((e: Error) => {
+        if (e.message.includes('431')) {
+          setError('Забагато підкатегорій для одного запиту. Будь ласка, виберіть конкретну підкатегорію.');
+        } else {
+          setError(e.message);
+        }
+      })
       .finally(() => setProdsLoading(false));
-  }, [applyPricesAndUnits]);
+  }, [id, allCategories, applyPricesAndUnits]);
 
   const handleSelect = useCallback((key: string) => {
     setSelectedKey(key);
@@ -337,10 +372,9 @@ export default function CategoryScreen() {
     handleSelect(key);
   }, [handleSelect]);
 
-  const { numColumns, cardWidth } = useMemo(() => {
+  const numColumns = useMemo(() => {
     const cw = isMobile ? width - 16 : width * 0.82;
-    const cols = Math.max(2, Math.floor(cw / CARD_MIN_WIDTH));
-    return { numColumns: cols, cardWidth: (cw - LIST_PADDING - GAP * (cols - 1)) / cols };
+    return Math.max(2, Math.floor(cw / CARD_MIN_WIDTH));
   }, [isMobile, width]);
 
   if (catsLoading) {
@@ -367,7 +401,7 @@ export default function CategoryScreen() {
                   <Ionicons name="close" size={22} color="#475569" />
                 </Pressable>
               </View>
-              <SidebarContent tree={tree} selectedKey={selectedKey} onSelect={handleSidebarSelect} />
+              <SidebarContent tree={tree} selectedKey={selectedKey} onSelect={handleSidebarSelect} rootId={id ?? ''} rootName={name ?? ''} />
             </BlurView>
           </View>
         </Modal>
@@ -377,7 +411,7 @@ export default function CategoryScreen() {
         {/* Ліва панель — тільки на широких екранах */}
         {!isMobile && (
           <View style={styles.sidebar}>
-            <SidebarContent tree={tree} selectedKey={selectedKey} onSelect={handleSidebarSelect} />
+            <SidebarContent tree={tree} selectedKey={selectedKey} onSelect={handleSidebarSelect} rootId={id ?? ''} rootName={name ?? ''} />
           </View>
         )}
 
@@ -432,19 +466,22 @@ export default function CategoryScreen() {
               </View>
 
               {viewMode === 'grid' ? (
-                <FlatList
-                  data={products}
+                <FlatList<GridItem>
+                  data={hasMore ? [...products, { Ref_Key: NEXT_PAGE_SENTINEL }] : products}
                   keyExtractor={(item) => item.Ref_Key}
                   key={`grid-${numColumns}`}
                   numColumns={numColumns}
-                  columnWrapperStyle={numColumns > 1 ? { gap: GAP } : undefined}
                   renderItem={({ item }) => (
-                    <ProductCard
-                      item={item}
-                      width={cardWidth}
-                      prices={prices}
-                      units={units}
-                    />
+                    <View style={{ width: `${(100 / numColumns).toFixed(3)}%`, paddingHorizontal: GAP / 2 }}>
+                      {item.Ref_Key === NEXT_PAGE_SENTINEL ? (
+                        <Pressable style={styles.nextPageCard} onPress={() => handlePageChange(page + 1)}>
+                          <Text style={styles.nextPageCardText}>›</Text>
+                          <Text style={styles.nextPageCardLabel}>Наступна{'\n'}сторінка</Text>
+                        </Pressable>
+                      ) : (
+                        <ProductCard item={item as Product} prices={prices} units={units} />
+                      )}
+                    </View>
                   )}
                   ListEmptyComponent={
                     <Text style={styles.emptyText}>Немає товарів у цій підкатегорії</Text>
@@ -452,16 +489,16 @@ export default function CategoryScreen() {
                   contentContainerStyle={styles.productList}
                 />
               ) : (
-                <FlatList
-                  data={products}
+                <FlatList<GridItem>
+                  data={hasMore ? [...products, { Ref_Key: NEXT_PAGE_SENTINEL }] : products}
                   keyExtractor={(item) => item.Ref_Key}
                   key="list"
-                  renderItem={({ item }) => (
-                    <ProductRow
-                      item={item}
-                      prices={prices}
-                      units={units}
-                    />
+                  renderItem={({ item }) => item.Ref_Key === NEXT_PAGE_SENTINEL ? (
+                    <Pressable style={styles.nextPageBtn} onPress={() => handlePageChange(page + 1)}>
+                      <Text style={styles.nextPageBtnText}>Наступна сторінка →</Text>
+                    </Pressable>
+                  ) : (
+                    <ProductRow item={item as Product} prices={prices} units={units} />
                   )}
                   ListEmptyComponent={
                     <Text style={styles.emptyText}>Немає товарів у цій підкатегорії</Text>
@@ -522,6 +559,8 @@ const styles = StyleSheet.create({
   treeLabelBtn: { flex: 1 },
   treeLabel: { fontSize: 13, color: '#334155', lineHeight: 18 },
   treeLabelSelected: { color: '#1D4ED8', fontWeight: '600' },
+  treeRootItem: { paddingLeft: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#E2E8F0', marginBottom: 4 },
+  treeRootLabel: { fontSize: 13, color: '#0F172A' },
 
   content: { flex: 1, paddingHorizontal: 8, paddingTop: 8 },
   searchRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
@@ -619,6 +658,32 @@ const styles = StyleSheet.create({
     paddingVertical: 7, paddingHorizontal: 12, alignItems: 'center',
   },
   rowAddText: { color: '#FFFFFF', fontSize: 12, fontWeight: '600' },
+
+  nextPageCard: {
+    flex: 1,
+    marginBottom: 8,
+    borderRadius: 10,
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    justifyContent: 'center',
+    alignItems: 'center',
+    minHeight: 160,
+    gap: 8,
+  },
+  nextPageCardText: { fontSize: 36, color: '#2563EB', fontWeight: '300' },
+  nextPageCardLabel: { fontSize: 13, fontWeight: '600', color: '#2563EB', textAlign: 'center' },
+
+  nextPageBtn: {
+    marginVertical: 4,
+    paddingVertical: 14,
+    borderRadius: 10,
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    alignItems: 'center',
+  },
+  nextPageBtnText: { fontSize: 14, fontWeight: '600', color: '#2563EB' },
 
   pagination: {
     flexDirection: 'row', alignItems: 'center',
