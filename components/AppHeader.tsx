@@ -1,6 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useCart } from '@/contexts/CartContext';
 import { useFavorites } from '@/contexts/FavoritesContext';
@@ -8,27 +9,41 @@ import { useFavorites } from '@/contexts/FavoritesContext';
 interface AppHeaderProps {
   showBack?: boolean;
   title?: string;
+  fallbackHref?: '/(tabs)/(catalog)' | '/(tabs)/orders' | '/(tabs)/favorites' | '/(tabs)/cart';
 }
 
-export function AppHeader({ showBack, title }: AppHeaderProps) {
+export function AppHeader({ showBack, title, fallbackHref = '/(tabs)/(catalog)' }: AppHeaderProps) {
   const router = useRouter();
+  const navigation = useNavigation();
   const { itemCount } = useCart();
   const { favoriteCount } = useFavorites();
   const insets = useSafeAreaInsets();
+
+  const handleBack = () => {
+    // Якщо fallbackHref вказано явно (не каталог за замовчуванням) — завжди туди
+    // Інакше пробуємо stack-back, і лише при відсутності — fallback
+    if (fallbackHref !== '/(tabs)/(catalog)') {
+      router.replace(fallbackHref);
+    } else if (navigation.canGoBack()) {
+      router.back();
+    } else {
+      router.replace(fallbackHref);
+    }
+  };
 
   return (
     <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
       {/* Left: back or logo */}
       <View style={styles.left}>
         {showBack ? (
-          <Pressable onPress={() => router.back()} style={styles.backBtn} hitSlop={8}>
+          <Pressable onPress={handleBack} style={styles.backBtn} hitSlop={8}>
             <Ionicons name="chevron-back" size={24} color="#2563EB" />
             {title ? (
               <Text style={styles.backTitle} numberOfLines={1}>{title}</Text>
             ) : null}
           </Pressable>
         ) : (
-          <Pressable style={styles.logoRow} onPress={() => router.replace('/(tabs)')} hitSlop={8}>
+          <Pressable style={styles.logoRow} onPress={() => router.replace('/(tabs)/(catalog)')} hitSlop={8}>
             <View style={styles.logoCircle}>
               <Text style={styles.logoLetter}>В</Text>
             </View>

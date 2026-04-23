@@ -8,6 +8,7 @@ import { getImageUrl } from '@/constants/api';
 import { useCart } from '@/contexts/CartContext';
 import { useFavorites } from '@/contexts/FavoritesContext';
 import { useToast } from '@/contexts/ToastContext';
+import { putProduct } from '@/services/productCache';
 
 export interface ProductCardProps {
   item: Product;
@@ -63,7 +64,7 @@ export function ProductCard({ item, width, prices, units, compact = false }: Pro
   return (
     <Pressable
       style={[styles.card, width != null ? { width, marginBottom: 8 } : { flex: 1, marginBottom: 8 }]}
-      onPress={() => router.push({ pathname: '/product/[id]', params: { id: item.Ref_Key, name: item.Description } })}
+      onPress={() => { putProduct(item); router.push({ pathname: '/product/[id]', params: { id: item.Ref_Key } }); }}
     >
       <View style={{ position: 'relative' }}>
         <View style={styles.imageWrap}>

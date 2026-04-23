@@ -48,7 +48,7 @@ export default function LoginScreen() {
       }
       const priceType = await getPriceType(contract.ТипЦенПродажи_Key);
       login(contractor, contract, priceType);
-      router.replace('/(tabs)');
+      router.replace('/(tabs)/(catalog)');
     } catch (e: any) {
       setError(e.message ?? 'Помилка з\'єднання');
     } finally {

@@ -15,7 +15,7 @@ import {
 import { useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
-import { getProducts, getProductsByCategories, getProductsByRootCategory, searchProducts, getAllCategories, getProductPrices, getUnitsByKeys, Category, Product, ProductPrice, Unit } from '@/services/odata';
+import { getProductsByCategories, getProductsByRootCategory, searchProducts, getAllCategories, getProductPrices, getUnitsByKeys, Category, Product, ProductPrice } from '@/services/odata';
 import { getImageUrl } from '@/constants/api';
 import { AppHeader } from '@/components/AppHeader';
 import { useCart } from '@/contexts/CartContext';
@@ -24,7 +24,7 @@ import { effectivePriceTypeKey } from '@/services/odata';
 import { useFavorites } from '@/contexts/FavoritesContext';
 import { ProductCard } from '@/components/ProductCard';
 
-const CARD_MIN_WIDTH = 180;
+const CARD_MIN_WIDTH = 210;
 const GAP = 8;
 const LIST_PADDING = 16;
 const PAGE_SIZE = 30;
@@ -140,7 +140,7 @@ function ProductRow({ item, prices, units }: ProductRowProps) {
           <Image source={{ uri: imgUrl }} style={styles.rowImage} contentFit="contain" cachePolicy="memory-disk" />
         ) : (
           <View style={[styles.rowImage, styles.rowImagePlaceholder]}>
-            <Text style={styles.productImageNoPhoto}>—</Text>
+            <Text style={{ fontSize: 14, color: '#CBD5E1' }}>—</Text>
           </View>
         )}
         <View style={styles.rowInfo}>
@@ -472,7 +472,7 @@ export default function CategoryScreen() {
                   key={`grid-${numColumns}`}
                   numColumns={numColumns}
                   renderItem={({ item }) => (
-                    <View style={{ width: `${(100 / numColumns).toFixed(3)}%`, paddingHorizontal: GAP / 2 }}>
+                    <View style={{ width: `${(100 / numColumns).toFixed(3)}%` as `${number}%`, paddingHorizontal: GAP / 2 }}>
                       {item.Ref_Key === NEXT_PAGE_SENTINEL ? (
                         <Pressable style={styles.nextPageCard} onPress={() => handlePageChange(page + 1)}>
                           <Text style={styles.nextPageCardText}>›</Text>

@@ -25,6 +25,11 @@ export default function OrderDetailScreen() {
 
   useEffect(() => {
     if (!id) return;
+    setLines([]);
+    setProducts(new Map());
+    setUnits(new Map());
+    setError(null);
+    setLoading(true);
     getOrderLines(id)
       .then(async (fetchedLines) => {
         setLines(fetchedLines);
@@ -49,7 +54,7 @@ export default function OrderDetailScreen() {
 
   return (
     <View style={styles.container}>
-      <AppHeader showBack title={`Комерційна пропозиція № ${number ?? ''} від ${formattedDate}`} />
+      <AppHeader showBack title={`Комерційна пропозиція № ${number ?? ''} від ${formattedDate}`} fallbackHref="/(tabs)/orders" />
 
       {loading ? (
         <View style={styles.center}>

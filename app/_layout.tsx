@@ -38,7 +38,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     if (!contractor && !onLoginScreen) {
       router.replace('/login');
     } else if (contractor && onLoginScreen) {
-      router.replace('/(tabs)');
+      router.replace('/(tabs)/(catalog)');
     }
   }, [contractor, isLoading, segments]);
 

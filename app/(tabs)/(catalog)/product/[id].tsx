@@ -1,11 +1,13 @@
 import { Image } from 'expo-image';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  FlatList,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
@@ -13,8 +15,10 @@ import { Ionicons } from '@expo/vector-icons';
 import {
   getProductsByKeys, getProductPrices, getUnitsByKeys,
   getProductProperties, getPropertyNames, getPropertyValues,
-  Product, ProductPrice, ProductProperty,
+  getProductImages,
+  Product, ProductPrice, ProductProperty, ProductImage,
 } from '@/services/odata';
+import { getProduct } from '@/services/productCache';
 import { getImageUrl } from '@/constants/api';
 import { AppHeader } from '@/components/AppHeader';
 import { useAuth } from '@/contexts/AuthContext';
@@ -24,13 +28,16 @@ import { useFavorites } from '@/contexts/FavoritesContext';
 import { useToast } from '@/contexts/ToastContext';
 
 export default function ProductScreen() {
-  const { id, name } = useLocalSearchParams<{ id: string; name?: string }>();
+  const { id } = useLocalSearchParams<{ id: string }>();
   const { priceType } = useAuth();
   const { addToCart } = useCart();
   const { isFavorite, toggleFavorite } = useFavorites();
   const { showToast } = useToast();
 
   const priceTypeKey = effectivePriceTypeKey(priceType);
+
+  const { width } = useWindowDimensions();
+  const isMobile = width < 768;
 
   const [product, setProduct] = useState<Product | null>(null);
   const [prices, setPrices] = useState<ProductPrice[]>([]);
@@ -39,51 +46,72 @@ export default function ProductScreen() {
   const [propNames, setPropNames] = useState<Map<string, string>>(new Map());
   const [propValues, setPropValues] = useState<Map<string, string>>(new Map());
   const [properties, setProperties] = useState<ProductProperty[]>([]);
+  const [images, setImages] = useState<ProductImage[]>([]);
+  const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [added, setAdded] = useState(false);
+  const cachedProduct = id ? getProduct(id) : null;
+  const [galleryWidth, setGalleryWidth] = useState(width);
+  const flatListRef = useRef<FlatList>(null);
 
   useEffect(() => {
     if (!id) return;
     setLoading(true);
     setError(null);
 
-    getProductsByKeys([id])
-      .then(async (products) => {
-        const prod = products[0] ?? null;
-        setProduct(prod);
-        if (!prod) return;
+    // Якщо товар є в пам'яті (прийшли з каталогу) — пропускаємо запит хвилі 1
 
-        // Паралельно: ціни + характеристики
-        const [fetchedPrices, fetchedProps] = await Promise.all([
-          priceTypeKey ? getProductPrices([id], priceTypeKey, priceType) : Promise.resolve([]),
-          getProductProperties(id),
+    const loadDetails = async (prod: Product) => {
+      setProduct(prod);
+
+      // Хвиля 2: паралельно ціни + характеристики + зображення
+      const [fetchedPrices, fetchedProps, fetchedImages] = await Promise.all([
+        priceTypeKey ? getProductPrices([id], priceTypeKey, priceType) : Promise.resolve([]),
+        getProductProperties(id),
+        getProductImages(id),
+      ]);
+
+      setImages(fetchedImages);
+      setActiveImageIndex(0);
+
+      setPrices(fetchedPrices);
+      setSelectedUnitKey(fetchedPrices[0]?.ЕдиницаИзмерения_Key ?? null);
+      if (fetchedPrices.length) {
+        const unitKeys = [...new Set(fetchedPrices.map((p) => p.ЕдиницаИзмерения_Key))];
+        const fetchedUnits = await getUnitsByKeys(unitKeys);
+        setUnits(new Map(fetchedUnits.map((u) => [u.Ref_Key, u.Description])));
+      }
+
+      setProperties(fetchedProps);
+      if (fetchedProps.length) {
+        const nameKeys = [...new Set(fetchedProps.map((p) => p.Свойство_Key))];
+        const valueKeys = [...new Set(fetchedProps.map((p) => p.Значение_Key))];
+        const [names, values] = await Promise.all([
+          getPropertyNames(nameKeys),
+          getPropertyValues(valueKeys),
         ]);
+        setPropNames(new Map(names.map((n) => [n.Ref_Key, n.Description])));
+        setPropValues(new Map(values.map((v) => [v.Ref_Key, v.Description])));
+      }
+    };
 
-        // Ціни та одиниці
-        setPrices(fetchedPrices);
-        setSelectedUnitKey(fetchedPrices[0]?.ЕдиницаИзмерения_Key ?? null);
-        if (fetchedPrices.length) {
-          const unitKeys = [...new Set(fetchedPrices.map((p) => p.ЕдиницаИзмерения_Key))];
-          const fetchedUnits = await getUnitsByKeys(unitKeys);
-          setUnits(new Map(fetchedUnits.map((u) => [u.Ref_Key, u.Description])));
-        }
-
-        // Характеристики: назви та значення
-        setProperties(fetchedProps);
-        if (fetchedProps.length) {
-          const nameKeys = [...new Set(fetchedProps.map((p) => p.Свойство_Key))];
-          const valueKeys = [...new Set(fetchedProps.map((p) => p.Значение_Key))];
-          const [names, values] = await Promise.all([
-            getPropertyNames(nameKeys),
-            getPropertyValues(valueKeys),
-          ]);
-          setPropNames(new Map(names.map((n) => [n.Ref_Key, n.Description])));
-          setPropValues(new Map(values.map((v) => [v.Ref_Key, v.Description])));
-        }
-      })
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
+    if (cachedProduct) {
+      // Хвиля 1 пропускається — одразу хвиля 2
+      loadDetails(cachedProduct)
+        .catch((e) => setError(e.message))
+        .finally(() => setLoading(false));
+    } else {
+      // Fallback (глибоке посилання, пряма навігація) — хвиля 1 → хвиля 2
+      getProductsByKeys([id])
+        .then(async (products) => {
+          const prod = products[0] ?? null;
+          if (!prod) return;
+          await loadDetails(prod);
+        })
+        .catch((e) => setError(e.message))
+        .finally(() => setLoading(false));
+    }
   }, [id, priceTypeKey]);
 
   const effectiveSelected = prices.find((p) => p.ЕдиницаИзмерения_Key === selectedUnitKey)
@@ -111,12 +139,12 @@ export default function ProductScreen() {
     ? getImageUrl(product.ОсновноеИзображение?.Ref_Key, product.ОсновноеИзображение?.Формат)
     : null;
 
-  const headerTitle = product?.Description ?? name ?? 'Товар';
+  const headerTitle = product?.Description ?? 'Товар';
 
   if (loading) {
     return (
       <View style={styles.container}>
-        <AppHeader showBack title={name ?? 'Товар'} />
+        <AppHeader showBack title={cachedProduct?.Description ?? 'Товар'} />
         <View style={styles.center}>
           <ActivityIndicator size="large" color="#2563EB" />
         </View>
@@ -127,7 +155,7 @@ export default function ProductScreen() {
   if (error || !product) {
     return (
       <View style={styles.container}>
-        <AppHeader showBack title={name ?? 'Товар'} />
+        <AppHeader showBack title={cachedProduct?.Description ?? 'Товар'} />
         <View style={styles.center}>
           <Text style={styles.errorText}>❌ {error ?? 'Товар не знайдено'}</Text>
         </View>
@@ -139,11 +167,56 @@ export default function ProductScreen() {
     <View style={styles.container}>
       <AppHeader showBack title={headerTitle} />
       <ScrollView contentContainerStyle={styles.scroll}>
+        <View style={isMobile ? undefined : styles.desktopRow}>
 
-        {/* Зображення */}
-        <View style={styles.imageWrap}>
-          {imgUrl ? (
-            <Image source={{ uri: imgUrl }} style={styles.image} contentFit="contain" cachePolicy="memory-disk" />
+        {/* Галерея зображень */}
+        <View style={[styles.imageWrap, !isMobile && styles.imageWrapDesktop]} onLayout={(e) => setGalleryWidth(e.nativeEvent.layout.width)}>
+          {images.length > 0 ? (
+            <View style={{ width: '100%', flexShrink: 0 }}>
+              <FlatList
+                ref={flatListRef}
+                data={images}
+                keyExtractor={(img) => img.Ref_Key}
+                horizontal
+                pagingEnabled
+                showsHorizontalScrollIndicator={false}
+                onScroll={(e) => {
+                  const idx = Math.round(e.nativeEvent.contentOffset.x / galleryWidth);
+                  setActiveImageIndex(idx);
+                }}
+                scrollEventThrottle={16}
+                renderItem={({ item: img }) => {
+                  const url = getImageUrl(img.Ref_Key, img.Формат);
+                  return (
+                    <View style={{ width: galleryWidth, height: 300 }}>
+                      {url ? (
+                        <Image source={{ uri: url }} style={{ width: galleryWidth, height: 300 }} contentFit="contain" cachePolicy="memory-disk" />
+                      ) : (
+                        <View style={[styles.imagePlaceholder, { width: galleryWidth }]}>
+                          <Ionicons name="image-outline" size={48} color="#CBD5E1" />
+                        </View>
+                      )}
+                    </View>
+                  );
+                }}
+              />
+              {images.length > 1 && (
+                <View style={styles.dotsRow}>
+                  {images.map((_, i) => (
+                    <Pressable
+                      key={i}
+                      onPress={() => {
+                        flatListRef.current?.scrollToOffset({ offset: i * galleryWidth, animated: true });
+                        setActiveImageIndex(i);
+                      }}
+                      style={[styles.dot, i === activeImageIndex && styles.dotActive]}
+                    />
+                  ))}
+                </View>
+              )}
+            </View>
+          ) : imgUrl ? (
+            <Image source={{ uri: imgUrl }} style={[styles.image, { flexShrink: 0 }]} contentFit="contain" cachePolicy="memory-disk" />
           ) : (
             <View style={styles.imagePlaceholder}>
               <Ionicons name="image-outline" size={48} color="#CBD5E1" />
@@ -153,7 +226,7 @@ export default function ProductScreen() {
         </View>
 
         {/* Деталі */}
-        <View style={styles.details}>
+        <View style={[styles.details, !isMobile && styles.detailsDesktop]}>
 
           {/* Коди + серце */}
           <View style={styles.codeRow}>
@@ -209,6 +282,22 @@ export default function ProductScreen() {
             )}
           </View>
 
+          {/* Кнопка в кошик */}
+          <Pressable
+            style={[styles.addBtn, added && styles.addBtnDone]}
+            onPress={handleAddToCart}
+          >
+            <Ionicons
+              name={added ? 'checkmark' : 'cart-outline'}
+              size={20}
+              color="#FFFFFF"
+              style={{ marginRight: 8 }}
+            />
+            <Text style={styles.addBtnText}>
+              {added ? 'Додано!' : 'Додати в кошик'}
+            </Text>
+          </Pressable>
+
           {/* Характеристики */}
           {properties.length > 0 && (
             <View style={styles.propsSection}>
@@ -228,23 +317,8 @@ export default function ProductScreen() {
             </View>
           )}
 
-          {/* Кнопка в кошик */}
-          <Pressable
-            style={[styles.addBtn, added && styles.addBtnDone]}
-            onPress={handleAddToCart}
-          >
-            <Ionicons
-              name={added ? 'checkmark' : 'cart-outline'}
-              size={20}
-              color="#FFFFFF"
-              style={{ marginRight: 8 }}
-            />
-            <Text style={styles.addBtnText}>
-              {added ? 'Додано!' : 'Додати в кошик'}
-            </Text>
-          </Pressable>
-
         </View>
+        </View>{/* desktopRow */}
       </ScrollView>
     </View>
   );
@@ -256,11 +330,28 @@ const styles = StyleSheet.create({
   errorText: { fontSize: 15, color: '#EF4444', textAlign: 'center', paddingHorizontal: 24 },
   scroll: { paddingBottom: 32 },
 
+  desktopRow: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+  },
+
   // Зображення
   imageWrap: {
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E2E8F0',
+  },
+  imageWrapDesktop: {
+    width: '45%',
+    borderBottomWidth: 0,
+    borderRightWidth: 1,
+    borderRightColor: '#E2E8F0',
+    position: 'sticky' as any,
+    top: 0,
+    alignSelf: 'flex-start',
+    height: '100vh' as any,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   image: { width: '100%', height: 300 },
   imagePlaceholder: {
@@ -269,9 +360,25 @@ const styles = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center', gap: 8,
   },
   noPhotoText: { fontSize: 13, color: '#CBD5E1' },
+  dotsRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 10,
+  },
+  dot: {
+    width: 7, height: 7, borderRadius: 4,
+    backgroundColor: '#CBD5E1',
+  },
+  dotActive: {
+    backgroundColor: '#2563EB',
+    width: 18,
+  },
 
   // Деталі
   details: { padding: 20, gap: 16 },
+  detailsDesktop: { flex: 1 },
 
   codeRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
   codes: { gap: 2, flex: 1 },

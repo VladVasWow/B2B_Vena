@@ -36,16 +36,16 @@ import { ProductCard } from '@/components/ProductCard';
 
 const PAGE_SIZE = 30;
 const GAP = 8;
-const CARD_MIN_WIDTH = 160;
+const CARD_MIN_WIDTH = 210;
 const MOBILE_BREAKPOINT = 768;
 
 // --- Картка категорії (вибрана) ---
-function FeaturedCategoryCard({ item, onPress }: { item: Category; onPress: () => void }) {
+function FeaturedCategoryCard({ item, onPress, fullWidth }: { item: Category; onPress: () => void; fullWidth?: boolean }) {
   const imgUrl = getImageUrl(item.ОсновноеИзображение?.Ref_Key, item.ОсновноеИзображение?.Формат);
   return (
-    <Pressable style={({ pressed }) => [styles.featCatCard, pressed && { opacity: 0.75 }]} onPress={onPress}>
+    <Pressable style={({ pressed }) => [styles.featCatCard, fullWidth && styles.featCatCardFull, pressed && { opacity: 0.75 }]} onPress={onPress}>
       {imgUrl
-        ? <Image source={{ uri: imgUrl }} style={styles.featCatImage} contentFit="cover" cachePolicy="memory-disk" />
+        ? <Image source={{ uri: imgUrl }} style={styles.featCatImage} contentFit="contain" cachePolicy="memory-disk" />
         : <View style={styles.featCatImagePlaceholder} />}
       <Text style={styles.featCatName} numberOfLines={2}>{item.Description}</Text>
     </Pressable>
@@ -292,7 +292,7 @@ export default function HomeScreen() {
                   numColumns={numColumns}
                   columnWrapperStyle={undefined}
                   renderItem={({ item }) => (
-                    <View style={{ width: `${(100 / numColumns).toFixed(3)}%`, paddingHorizontal: GAP / 2 }}>
+                    <View style={{ width: `${(100 / numColumns).toFixed(3)}%` as `${number}%`, paddingHorizontal: GAP / 2 }}>
                       <ProductCard item={item} prices={searchPrices} units={searchUnits} compact />
                     </View>
                   )}
@@ -332,6 +332,7 @@ export default function HomeScreen() {
                       <FeaturedCategoryCard
                         key={cat.Ref_Key}
                         item={cat}
+                        fullWidth={isMobile}
                         onPress={() => router.push({ pathname: '/category/[id]', params: { id: cat.Ref_Key, name: cat.Description } })}
                       />
                     ))}
@@ -343,9 +344,9 @@ export default function HomeScreen() {
               {featuredProds.length > 0 && (
                 <View style={styles.section}>
                   <Text style={styles.sectionTitle}>Рекомендовані товари</Text>
-                  <View style={[styles.productGrid, { gap: GAP }]}>
+                  <View style={styles.productGrid}>
                     {featuredProds.map((prod) => (
-                      <View key={prod.Ref_Key} style={{ flex: 1, minWidth: CARD_MIN_WIDTH, maxWidth: '50%' }}>
+                      <View key={prod.Ref_Key} style={{ width: `${(100 / numColumns).toFixed(3)}%` as `${number}%`, paddingHorizontal: GAP / 2, marginBottom: GAP }}>
                         <ProductCard item={prod} prices={featuredPrices} units={featuredUnits} compact />
                       </View>
                     ))}
@@ -436,6 +437,7 @@ const styles = StyleSheet.create({
 
   // Вибрані категорії
   featCatsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: GAP },
+  featCatCardFull: { width: '100%' },
   featCatCard: {
     width: 210,
     backgroundColor: '#FFFFFF',
@@ -447,8 +449,8 @@ const styles = StyleSheet.create({
     shadowRadius: 5,
     elevation: 2,
   },
-  featCatImage: { width: '100%', height: 160, backgroundColor: '#F8FAFC' },
-  featCatImagePlaceholder: { width: '100%', height: 160, backgroundColor: '#F1F5F9' },
+  featCatImage: { width: '100%', height: 140, backgroundColor: '#F8FAFC' },
+  featCatImagePlaceholder: { width: '100%', height: 140, backgroundColor: '#F1F5F9' },
   featCatName: { fontSize: 14, color: '#1E293B', lineHeight: 20, padding: 10, fontWeight: '600' },
 
   // Товари

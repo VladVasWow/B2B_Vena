@@ -157,6 +157,11 @@ function setCached(key: string, data: Category[]): void {
   categoryCache.set(key, { data, expiresAt: Date.now() + CATEGORY_TTL });
 }
 
+// Кеш назв та значень властивостей (рідко змінюються — TTL 2 год)
+const PROP_TTL = 2 * 60 * 60 * 1000;
+const propNameCache = new Map<string, CacheEntry<PropertyName>>();
+const propValueCache = new Map<string, CacheEntry<PropertyValue>>();
+
 
 // --- API методи ---
 
@@ -420,31 +425,43 @@ export async function getProductProperties(productKey: string): Promise<ProductP
 // Назви характеристик із Catalog_СвойстваНоменклатуры
 export async function getPropertyNames(keys: string[]): Promise<PropertyName[]> {
   if (!keys.length) return [];
-  const filter = keys.map((k) => `Ref_Key eq guid'${k}'`).join(' or ');
-  const data = await odataGet<ODataList<PropertyName>>(
-    'Catalog_%D0%A1%D0%B2%D0%BE%D0%B9%D1%81%D1%82%D0%B2%D0%B0%D0%9D%D0%BE%D0%BC%D0%B5%D0%BD%D0%BA%D0%BB%D0%B0%D1%82%D1%83%D1%80%D1%8B',
-    {
-      '$filter': filter,
-      '$select': 'Ref_Key,Description',
-      '$format': 'json',
+  const now = Date.now();
+  const missing = keys.filter((k) => {
+    const e = propNameCache.get(k);
+    return !e || now > e.expiresAt;
+  });
+  if (missing.length) {
+    const filter = missing.map((k) => `Ref_Key eq guid'${k}'`).join(' or ');
+    const data = await odataGet<ODataList<PropertyName>>(
+      'Catalog_%D0%A1%D0%B2%D0%BE%D0%B9%D1%81%D1%82%D0%B2%D0%B0%D0%9D%D0%BE%D0%BC%D0%B5%D0%BD%D0%BA%D0%BB%D0%B0%D1%82%D1%83%D1%80%D1%8B',
+      { '$filter': filter, '$select': 'Ref_Key,Description', '$format': 'json' }
+    );
+    for (const item of data.value) {
+      propNameCache.set(item.Ref_Key, { data: item, expiresAt: now + PROP_TTL });
     }
-  );
-  return data.value;
+  }
+  return keys.map((k) => propNameCache.get(k)?.data).filter(Boolean) as PropertyName[];
 }
 
 // Значення характеристик із Catalog_ЗначенияСвойствНоменклатуры
 export async function getPropertyValues(keys: string[]): Promise<PropertyValue[]> {
   if (!keys.length) return [];
-  const filter = keys.map((k) => `Ref_Key eq guid'${k}'`).join(' or ');
-  const data = await odataGet<ODataList<PropertyValue>>(
-    'Catalog_%D0%97%D0%BD%D0%B0%D1%87%D0%B5%D0%BD%D0%B8%D1%8F%D0%A1%D0%B2%D0%BE%D0%B9%D1%81%D1%82%D0%B2%D0%9D%D0%BE%D0%BC%D0%B5%D0%BD%D0%BA%D0%BB%D0%B0%D1%82%D1%83%D1%80%D1%8B',
-    {
-      '$filter': filter,
-      '$select': 'Ref_Key,Description',
-      '$format': 'json',
+  const now = Date.now();
+  const missing = keys.filter((k) => {
+    const e = propValueCache.get(k);
+    return !e || now > e.expiresAt;
+  });
+  if (missing.length) {
+    const filter = missing.map((k) => `Ref_Key eq guid'${k}'`).join(' or ');
+    const data = await odataGet<ODataList<PropertyValue>>(
+      'Catalog_%D0%97%D0%BD%D0%B0%D1%87%D0%B5%D0%BD%D0%B8%D1%8F%D0%A1%D0%B2%D0%BE%D0%B9%D1%81%D1%82%D0%B2%D0%9D%D0%BE%D0%BC%D0%B5%D0%BD%D0%BA%D0%BB%D0%B0%D1%82%D1%83%D1%80%D1%8B',
+      { '$filter': filter, '$select': 'Ref_Key,Description', '$format': 'json' }
+    );
+    for (const item of data.value) {
+      propValueCache.set(item.Ref_Key, { data: item, expiresAt: now + PROP_TTL });
     }
-  );
-  return data.value;
+  }
+  return keys.map((k) => propValueCache.get(k)?.data).filter(Boolean) as PropertyValue[];
 }
 
 // Тип цін по ключу
@@ -628,6 +645,23 @@ export async function createOrder(params: CreateOrderParams): Promise<string> {
 
 // Авторизація по телефону та ЄДРПОУ
 // Телефон нормалізується до 10 цифр (без коду країни), шукається через substringof
+export interface ProductImage {
+  Ref_Key: string;
+  Формат: string;
+  ИмяФайла: string;
+}
+
+export async function getProductImages(productKey: string): Promise<ProductImage[]> {
+  // Поле Объект — составний тип, фільтрувати ТІЛЬКИ через cast()
+  const filter = `Объект eq cast(guid'${productKey}','Catalog_Номенклатура') and Формат ne ''`;
+  const data = await odataGet<ODataList<ProductImage>>('Catalog_ХранилищеДополнительнойИнформации', {
+    '$filter': filter,
+    '$select': 'Ref_Key,Формат,ИмяФайла',
+    '$format': 'json',
+  });
+  return data.value;
+}
+
 export async function loginByPhoneAndEdrpou(phone: string, edrpou: string): Promise<Contractor | null> {
   // Нормалізація: залишаємо тільки цифри, беремо останні 10
   const digits = phone.replace(/\D/g, '');
