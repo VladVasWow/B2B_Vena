@@ -101,6 +101,10 @@ export default function ProfileScreen() {
           </>
         )}
 
+        <Pressable style={({ pressed }) => [styles.devBtn, pressed && { opacity: 0.8 }]} onPress={() => router.push('/odata-log')}>
+          <Text style={styles.devBtnText}>🔍 OData лог</Text>
+        </Pressable>
+
         <Pressable style={({ pressed }) => [styles.logoutBtn, pressed && { opacity: 0.8 }]} onPress={handleLogout}>
           <Text style={styles.logoutText}>Вийти</Text>
         </Pressable>
@@ -164,6 +168,13 @@ const styles = StyleSheet.create({
     fontSize: 13, fontWeight: '600', color: '#64748B',
     textTransform: 'uppercase', letterSpacing: 0.5, paddingHorizontal: 4,
   },
+
+  devBtn: {
+    backgroundColor: '#F0F9FF', borderRadius: 12,
+    paddingVertical: 12, alignItems: 'center',
+    borderWidth: 1, borderColor: '#BAE6FD', marginBottom: 10,
+  },
+  devBtnText: { fontSize: 13, fontWeight: '600', color: '#0369A1' },
 
   logoutBtn: {
     backgroundColor: '#FEF2F2', borderRadius: 12,

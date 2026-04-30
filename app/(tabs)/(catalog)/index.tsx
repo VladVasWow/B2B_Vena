@@ -23,6 +23,7 @@ import {
   getProductsByKeys,
   getProductPrices,
   getUnitsByKeys,
+  getMainImageFormats,
   searchProducts,
   Category,
   Product,
@@ -52,15 +53,27 @@ function FeaturedCategoryCard({ item, onPress, fullWidth }: { item: Category; on
   );
 }
 
-// --- Допоміжна функція завантаження цін ---
+// --- Допоміжна функція завантаження цін + зображень ---
 async function loadPricesAndUnits(
   products: Product[],
   priceTypeKey: string,
   priceType: PriceType | null,
 ): Promise<{ prices: ProductPrice[]; units: Map<string, string> }> {
-  if (!products.length || !priceTypeKey) return { prices: [], units: new Map() };
-  const productKeys = products.map((p) => p.Ref_Key);
-  const fetchedPrices = await getProductPrices(productKeys, priceTypeKey, priceType);
+  if (!products.length) return { prices: [], units: new Map() };
+
+  const imgKeys = products.map((p) => p.ОсновноеИзображение_Key).filter(Boolean) as string[];
+  const [fetchedPrices, imgFormats] = await Promise.all([
+    priceTypeKey ? getProductPrices(products.map((p) => p.Ref_Key), priceTypeKey, priceType) : Promise.resolve([]),
+    getMainImageFormats(imgKeys),
+  ]);
+
+  // Патчимо items: вставляємо ОсновноеИзображение з форматом
+  products.forEach((item) => {
+    const key = item.ОсновноеИзображение_Key;
+    const fmt = key ? imgFormats.get(key) : undefined;
+    if (key && fmt) item.ОсновноеИзображение = { Ref_Key: key, Формат: fmt };
+  });
+
   const unitKeys = [...new Set(fetchedPrices.map((p) => p.ЕдиницаИзмерения_Key))];
   const fetchedUnits = await getUnitsByKeys(unitKeys);
   return {

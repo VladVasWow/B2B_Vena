@@ -15,7 +15,7 @@ import {
 import { useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
-import { getProductsByCategories, getProductsByRootCategory, searchProducts, getAllCategories, getProductPrices, getUnitsByKeys, Category, Product, ProductPrice } from '@/services/odata';
+import { getProductsByCategories, getProductsByRootCategory, searchProducts, getAllCategories, getProductPrices, getUnitsByKeys, getMainImageFormats, Category, Product, ProductPrice } from '@/services/odata';
 import { getImageUrl } from '@/constants/api';
 import { AppHeader } from '@/components/AppHeader';
 import { useCart } from '@/contexts/CartContext';
@@ -226,6 +226,47 @@ function SidebarContent({ tree, selectedKey, onSelect, rootId, rootName }: Sideb
   );
 }
 
+// --- Пагінатор ---
+
+function buildPages(current: number, total: number): (number | '…')[] {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i);
+  const pages: (number | '…')[] = [];
+  pages.push(0);
+  if (current > 2) pages.push('…');
+  for (let i = Math.max(1, current - 1); i <= Math.min(total - 2, current + 1); i++) pages.push(i);
+  if (current < total - 3) pages.push('…');
+  pages.push(total - 1);
+  return pages;
+}
+
+function Paginator({ page, total, pageSize, onPage }: {
+  page: number; total: number; pageSize: number; onPage: (p: number) => void;
+}) {
+  const totalPages = Math.ceil(total / pageSize);
+  const pages = buildPages(page, totalPages);
+  return (
+    <View style={styles.pagination}>
+      <Pressable style={[styles.pageBtn, page === 0 && styles.pageBtnDisabled]} onPress={() => onPage(page - 1)} disabled={page === 0}>
+        <Text style={styles.pageBtnText}>‹</Text>
+      </Pressable>
+      <View style={styles.pageNumbers}>
+        {pages.map((p, i) =>
+          p === '…' ? (
+            <Text key={`dots-${i}`} style={styles.pageDots}>…</Text>
+          ) : (
+            <Pressable key={p} style={[styles.pageNum, p === page && styles.pageNumActive]} onPress={() => onPage(p)}>
+              <Text style={[styles.pageNumText, p === page && styles.pageNumTextActive]}>{p + 1}</Text>
+            </Pressable>
+          )
+        )}
+      </View>
+      <Pressable style={[styles.pageBtn, page === totalPages - 1 && styles.pageBtnDisabled]} onPress={() => onPage(page + 1)} disabled={page === totalPages - 1}>
+        <Text style={styles.pageBtnText}>›</Text>
+      </Pressable>
+    </View>
+  );
+}
+
 // --- Головний екран ---
 
 export default function CategoryScreen() {
@@ -235,6 +276,7 @@ export default function CategoryScreen() {
   const [allCategories, setAllCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [hasMore, setHasMore] = useState(false);
+  const [total, setTotal] = useState(0);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [page, setPage] = useState(0);
 
@@ -277,11 +319,25 @@ export default function CategoryScreen() {
     loadProducts(id, 0); // eslint-disable-line react-hooks/exhaustive-deps
   }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Спільний хелпер завантаження цін та одиниць — не залежить від інших useCallback
+  // Спільний хелпер: ціни + одиниці + формати зображень — паралельно
   const applyPricesAndUnits = useCallback(async (items: Product[]) => {
-    if (!items.length || !priceTypeKey) { setPrices([]); setUnits(new Map()); return; }
+    if (!items.length) { setPrices([]); setUnits(new Map()); return; }
+
     const productKeys = items.map((p) => p.Ref_Key);
-    const fetchedPrices = await getProductPrices(productKeys, priceTypeKey, priceType);
+    const imgKeys = items.map((p) => p.ОсновноеИзображение_Key).filter(Boolean) as string[];
+
+    const [fetchedPrices, imgFormats] = await Promise.all([
+      priceTypeKey ? getProductPrices(productKeys, priceTypeKey, priceType) : Promise.resolve([]),
+      getMainImageFormats(imgKeys),
+    ]);
+
+    // Патчимо items: вставляємо ОсновноеИзображение з форматом
+    items.forEach((item) => {
+      const key = item.ОсновноеИзображение_Key;
+      const fmt = key ? imgFormats.get(key) : undefined;
+      if (key && fmt) item.ОсновноеИзображение = { Ref_Key: key, Формат: fmt };
+    });
+
     setPrices(fetchedPrices);
     const unitKeys = [...new Set(fetchedPrices.map((p) => p.ЕдиницаИзмерения_Key))];
     const fetchedUnits = await getUnitsByKeys(unitKeys);
@@ -295,7 +351,7 @@ export default function CategoryScreen() {
   const loadProducts = useCallback((key: string, pageNum: number) => {
     setProdsLoading(true);
     setError(null);
-    let fetcher: Promise<{ items: Product[]; hasMore: boolean }>;
+    let fetcher: Promise<{ items: Product[]; hasMore: boolean; total: number }>;
     if (key === id) {
       fetcher = getProductsByRootCategory(key, pageNum, PAGE_SIZE);
     } else {
@@ -303,9 +359,10 @@ export default function CategoryScreen() {
       fetcher = getProductsByCategories(leafKeys, pageNum, PAGE_SIZE);
     }
     fetcher
-      .then(async ({ items, hasMore: more }) => {
+      .then(async ({ items, hasMore: more, total: t }) => {
         setProducts(items);
         setHasMore(more);
+        setTotal(t);
         await applyPricesAndUnits(items);
       })
       .catch((e: Error) => {
@@ -345,9 +402,10 @@ export default function CategoryScreen() {
     setIsSearching(true);
     setProdsLoading(true);
     searchProducts(q.trim(), pageNum, PAGE_SIZE, false)
-      .then(async ({ items, hasMore: more }) => {
+      .then(async ({ items, hasMore: more, total: t }) => {
         setProducts(items);
         setHasMore(more);
+        setTotal(t);
         setPage(pageNum);
         await applyPricesAndUnits(items);
       })
@@ -466,21 +524,14 @@ export default function CategoryScreen() {
               </View>
 
               {viewMode === 'grid' ? (
-                <FlatList<GridItem>
-                  data={hasMore ? [...products, { Ref_Key: NEXT_PAGE_SENTINEL }] : products}
+                <FlatList<Product>
+                  data={products}
                   keyExtractor={(item) => item.Ref_Key}
                   key={`grid-${numColumns}`}
                   numColumns={numColumns}
                   renderItem={({ item }) => (
                     <View style={{ width: `${(100 / numColumns).toFixed(3)}%` as `${number}%`, paddingHorizontal: GAP / 2 }}>
-                      {item.Ref_Key === NEXT_PAGE_SENTINEL ? (
-                        <Pressable style={styles.nextPageCard} onPress={() => handlePageChange(page + 1)}>
-                          <Text style={styles.nextPageCardText}>›</Text>
-                          <Text style={styles.nextPageCardLabel}>Наступна{'\n'}сторінка</Text>
-                        </Pressable>
-                      ) : (
-                        <ProductCard item={item as Product} prices={prices} units={units} />
-                      )}
+                      <ProductCard item={item} prices={prices} units={units} />
                     </View>
                   )}
                   ListEmptyComponent={
@@ -489,16 +540,12 @@ export default function CategoryScreen() {
                   contentContainerStyle={styles.productList}
                 />
               ) : (
-                <FlatList<GridItem>
-                  data={hasMore ? [...products, { Ref_Key: NEXT_PAGE_SENTINEL }] : products}
+                <FlatList<Product>
+                  data={products}
                   keyExtractor={(item) => item.Ref_Key}
                   key="list"
-                  renderItem={({ item }) => item.Ref_Key === NEXT_PAGE_SENTINEL ? (
-                    <Pressable style={styles.nextPageBtn} onPress={() => handlePageChange(page + 1)}>
-                      <Text style={styles.nextPageBtnText}>Наступна сторінка →</Text>
-                    </Pressable>
-                  ) : (
-                    <ProductRow item={item as Product} prices={prices} units={units} />
+                  renderItem={({ item }) => (
+                    <ProductRow item={item} prices={prices} units={units} />
                   )}
                   ListEmptyComponent={
                     <Text style={styles.emptyText}>Немає товарів у цій підкатегорії</Text>
@@ -508,26 +555,8 @@ export default function CategoryScreen() {
                 />
               )}
 
-              {(page > 0 || hasMore) && (
-                <View style={styles.pagination}>
-                  <Pressable
-                    style={[styles.pageBtn, page === 0 && styles.pageBtnDisabled]}
-                    onPress={() => handlePageChange(page - 1)}
-                    disabled={page === 0}
-                  >
-                    <Text style={styles.pageBtnText}>‹</Text>
-                  </Pressable>
-
-                  <Text style={styles.pageInfo}>{page + 1}</Text>
-
-                  <Pressable
-                    style={[styles.pageBtn, !hasMore && styles.pageBtnDisabled]}
-                    onPress={() => handlePageChange(page + 1)}
-                    disabled={!hasMore}
-                  >
-                    <Text style={styles.pageBtnText}>›</Text>
-                  </Pressable>
-                </View>
+              {total > PAGE_SIZE && (
+                <Paginator page={page} total={total} pageSize={PAGE_SIZE} onPage={handlePageChange} />
               )}
             </>
           )}
@@ -687,13 +716,24 @@ const styles = StyleSheet.create({
 
   pagination: {
     flexDirection: 'row', alignItems: 'center',
-    justifyContent: 'center', paddingVertical: 12, gap: 16,
+    justifyContent: 'center', paddingVertical: 10, paddingHorizontal: 12, gap: 8,
+    backgroundColor: '#FFFFFF', borderTopWidth: 1, borderTopColor: '#E2E8F0',
   },
   pageBtn: {
-    width: 36, height: 36, borderRadius: 8,
+    width: 34, height: 34, borderRadius: 8,
     backgroundColor: '#2563EB', justifyContent: 'center', alignItems: 'center',
   },
   pageBtnDisabled: { backgroundColor: '#CBD5E1' },
   pageBtnText: { color: '#FFFFFF', fontSize: 18, fontWeight: '700' },
-  pageInfo: { fontSize: 14, color: '#475569', fontWeight: '500' },
+  pageNumbers: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  pageNum: {
+    minWidth: 34, height: 34, borderRadius: 8,
+    paddingHorizontal: 6,
+    justifyContent: 'center', alignItems: 'center',
+    borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#F8FAFC',
+  },
+  pageNumActive: { backgroundColor: '#2563EB', borderColor: '#2563EB' },
+  pageNumText: { fontSize: 13, fontWeight: '600', color: '#475569' },
+  pageNumTextActive: { color: '#FFFFFF' },
+  pageDots: { fontSize: 14, color: '#94A3B8', paddingHorizontal: 2 },
 });

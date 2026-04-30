@@ -1,8 +1,10 @@
 import { getAuthHeader, IS_WEB, ODATA_URL, ORGANIZATION_KEY } from '@/constants/api';
+import { addLogEntry, describeResource } from '@/services/odataLogger';
 
 // --- Типи ---
 export interface ODataList<T> {
   value: T[];
+  'odata.count'?: string; // присутній коли $inlinecount=allpages
 }
 
 export interface Contractor {
@@ -62,6 +64,7 @@ export interface Product {
   Code: string;
   Description: string;
   Артикул: string;
+  ОсновноеИзображение_Key?: string;
   ОсновноеИзображение?: { Ref_Key: string; Формат: string };
   Категория_Key: string;
   СтавкаНДС?: string;
@@ -93,13 +96,37 @@ async function odataGet<T>(resource: string, params: Record<string, string> = {}
     headers['Authorization'] = getAuthHeader();
   }
 
+  const t0 = Date.now();
   const response = await fetch(url, { headers });
+  const text = await response.text();
+  const durationMs = Date.now() - t0;
+
+  let decodedResource = resource;
+  try { decodedResource = decodeURIComponent(resource); } catch {}
+
+  // Будуємо читабельний прямий URL для логу (без proxy, без encoding)
+  const logParams = Object.entries(params)
+    .map(([k, v]) => `${k}=${v}`)
+    .join('&');
+  const logUrl = `https://1csync.mailcn.com.ua:9443/VenaCentr/odata/standard.odata/${decodedResource}?${logParams}`;
+
+  addLogEntry({
+    ts: t0,
+    method: 'GET',
+    resource: decodedResource,
+    description: describeResource(resource, params),
+    fullUrl: logUrl,
+    status: response.status,
+    durationMs,
+    sizeBytes: new TextEncoder().encode(text).length,
+  });
 
   if (!response.ok) {
     throw new Error(`OData помилка ${response.status}: ${response.statusText}`);
   }
 
-  return response.json();
+  try { return JSON.parse(text); }
+  catch { throw new Error(`Не вдалося розпарсити відповідь: ${text.slice(0, 100)}`); }
 }
 
 async function odataPost<T>(resource: string, body: Record<string, unknown>): Promise<T> {
@@ -202,20 +229,21 @@ export async function getAllCategories(rootKey: string): Promise<Category[]> {
 export interface ProductsResult {
   items: Product[];
   hasMore: boolean;
+  total: number;
 }
 
 // Всі товари кореневої категорії з пагінацією (через expand Категория)
 export async function getProductsByRootCategory(rootKey: string, page = 0, pageSize = 30): Promise<ProductsResult> {
   const data = await odataGet<ODataList<Product>>('Catalog_Номенклатура', {
     '$filter': `IsFolder eq false and DeletionMark eq false and ИспользуетВебСайт eq true and Категория/КорневаяКатегория_Key eq guid'${rootKey}'`,
-    '$select': 'Ref_Key,Code,Description,Артикул,Категория_Key,СтавкаНДС,ОсновноеИзображение/Ref_Key,ОсновноеИзображение/Формат',
-    '$expand': 'ОсновноеИзображение,Категория',
-    '$top': String(pageSize + 1),
+    '$select': 'Ref_Key,Code,Description,Артикул,Категория_Key,СтавкаНДС,ОсновноеИзображение_Key',
+    '$top': String(pageSize),
     '$skip': String(page * pageSize),
+    '$inlinecount': 'allpages',
     '$format': 'json',
   });
-  const hasMore = data.value.length > pageSize;
-  return { items: data.value.slice(0, pageSize), hasMore };
+  const total = parseInt(data['odata.count'] ?? '0', 10);
+  return { items: data.value, hasMore: (page + 1) * pageSize < total, total };
 }
 
 // Товари по одній або кількох категоріях (листові нащадки) з пагінацією
@@ -226,31 +254,39 @@ export async function getProductsByCategories(categoryKeys: string[], page = 0, 
 
   const data = await odataGet<ODataList<Product>>('Catalog_Номенклатура', {
     '$filter': `IsFolder eq false and DeletionMark eq false and ИспользуетВебСайт eq true and ${keyFilter}`,
-    '$select': 'Ref_Key,Code,Description,Артикул,Категория_Key,СтавкаНДС,ОсновноеИзображение/Ref_Key,ОсновноеИзображение/Формат',
-    '$expand': 'ОсновноеИзображение',
-    '$top': String(pageSize + 1),
+    '$select': 'Ref_Key,Code,Description,Артикул,Категория_Key,СтавкаНДС,ОсновноеИзображение_Key',
+    '$top': String(pageSize),
     '$skip': String(page * pageSize),
+    '$inlinecount': 'allpages',
     '$format': 'json',
   });
-  const hasMore = data.value.length > pageSize;
-  return { items: data.value.slice(0, pageSize), hasMore };
+  const total = parseInt(data['odata.count'] ?? '0', 10);
+  return { items: data.value, hasMore: (page + 1) * pageSize < total, total };
 }
 
 // Товари по підкатегорії з пагінацією та загальною кількістю
 export async function getProducts(categoryKey: string, page = 0, pageSize = 30): Promise<ProductsResult> {
   const data = await odataGet<ODataList<Product>>('Catalog_Номенклатура', {
     '$filter': `IsFolder eq false and DeletionMark eq false and ИспользуетВебСайт eq true and Категория_Key eq guid'${categoryKey}'`,
-    '$select': 'Ref_Key,Code,Description,Артикул,Категория_Key,СтавкаНДС,ОсновноеИзображение/Ref_Key,ОсновноеИзображение/Формат',
-    '$expand': 'ОсновноеИзображение',
-    '$top': String(pageSize + 1), // запитуємо +1 щоб визначити чи є наступна сторінка
+    '$select': 'Ref_Key,Code,Description,Артикул,Категория_Key,СтавкаНДС,ОсновноеИзображение_Key',
+    '$top': String(pageSize),
     '$skip': String(page * pageSize),
+    '$inlinecount': 'allpages',
     '$format': 'json',
   });
-  const hasMore = data.value.length > pageSize;
-  return {
-    items: data.value.slice(0, pageSize),
-    hasMore,
-  };
+  const total = parseInt(data['odata.count'] ?? '0', 10);
+  return { items: data.value, hasMore: (page + 1) * pageSize < total, total };
+}
+
+// Батч-запит форматів основних зображень по списку ключів (без бінарних даних)
+export async function getMainImageFormats(imgKeys: string[]): Promise<Map<string, string>> {
+  if (!imgKeys.length) return new Map();
+  const filter = imgKeys.map((k) => `Ref_Key eq guid'${k}'`).join(' or ');
+  const data = await odataGet<ODataList<{ Ref_Key: string; Формат: string }>>(
+    'Catalog_ХранилищеДополнительнойИнформации',
+    { '$filter': filter, '$select': 'Ref_Key,Формат', '$format': 'json' }
+  );
+  return new Map(data.value.map((r) => [r.Ref_Key, r.Формат]));
 }
 
 // Ціни товарів з регістру ЦеныКомпании через SliceLast
@@ -261,7 +297,8 @@ async function fetchPriceSlice(productKeys: string[], typeKey: string): Promise<
     : `(${productKeys.map((k) => `Номенклатура_Key eq guid''${k}''`).join(' or ')})`;
 
   const condition = `ТипЦен_Key eq guid''${typeKey}'' and ${prodFilter}`;
-  const resource = `InformationRegister_ЦеныКомпании_RecordType/SliceLast(Period=datetime'2030-01-01T00:00:00',Condition='${condition}')`;
+  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  const resource = `InformationRegister_ЦеныКомпании_RecordType/SliceLast(Period=datetime'${today}T23:59:59',Condition='${condition}')`;
 
   const data = await odataGet<ODataList<ProductPrice>>(resource, {
     '$select': 'Номенклатура_Key,ЕдиницаИзмерения_Key,Цена,ПроцентСкидкиНаценки',
@@ -377,17 +414,14 @@ export async function searchProducts(query: string, page = 0, pageSize = 30, con
   const filter = `IsFolder eq false and DeletionMark eq false and ИспользуетВебСайт eq true and (${textFilter})`;
   const data = await odataGet<ODataList<Product>>('Catalog_Номенклатура', {
     '$filter': filter,
-    '$select': 'Ref_Key,Code,Description,Артикул,Категория_Key,СтавкаНДС,ОсновноеИзображение/Ref_Key,ОсновноеИзображение/Формат',
-    '$expand': 'ОсновноеИзображение',
-    '$top': String(pageSize + 1),
+    '$select': 'Ref_Key,Code,Description,Артикул,Категория_Key,СтавкаНДС,ОсновноеИзображение_Key',
+    '$top': String(pageSize),
     '$skip': String(page * pageSize),
+    '$inlinecount': 'allpages',
     '$format': 'json',
   });
-  const hasMore = data.value.length > pageSize;
-  return {
-    items: data.value.slice(0, pageSize),
-    hasMore,
-  };
+  const total = parseInt(data['odata.count'] ?? '0', 10);
+  return { items: data.value, hasMore: (page + 1) * pageSize < total, total };
 }
 
 // --- Характеристики товару (СвойстваКатегории) ---
@@ -532,6 +566,7 @@ export interface OrderLine {
 export interface OrdersResult {
   items: Order[];
   hasMore: boolean;
+  total: number; // загальна кількість документів
 }
 
 const ORDER_DOC = 'Document_%D1%82%D1%83%D0%9A%D0%BE%D0%BC%D0%BC%D0%B5%D1%80%D1%87%D0%B5%D1%81%D0%BA%D0%BE%D0%B5%D0%9F%D1%80%D0%B5%D0%B4%D0%BB%D0%BE%D0%B6%D0%B5%D0%BD%D0%B8%D0%B5';
@@ -547,12 +582,14 @@ export async function getOrders(
     '$filter': filter,
     '$select': 'Ref_Key,Number,Date,Posted,Утвержден,ЕстьЗаказПокупателя,ЕстьРасход,ЕстьСчет,СуммаДокумента,НомерЗаказа,Комментарий,Контрагент_Key,ДоговорВзаиморасчетов_Key',
     '$orderby': 'Date desc',
-    '$top': String(pageSize + 1),
+    '$top': String(pageSize),
     '$skip': String(page * pageSize),
+    '$inlinecount': 'allpages',
     '$format': 'json',
   });
-  const hasMore = data.value.length > pageSize;
-  return { items: data.value.slice(0, pageSize), hasMore };
+  const total = parseInt(data['odata.count'] ?? '0', 10);
+  const hasMore = (page + 1) * pageSize < total;
+  return { items: data.value, hasMore, total };
 }
 
 export async function getOrderLines(orderKey: string): Promise<OrderLine[]> {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
 import {
   ActivityIndicator,
@@ -57,6 +57,49 @@ function OrderCard({ order, onPress }: { order: Order; onPress: () => void }) {
   );
 }
 
+// --- Пагінатор ---
+
+function buildPages(current: number, total: number): (number | '…')[] {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i);
+  const pages: (number | '…')[] = [];
+  pages.push(0);
+  if (current > 2) pages.push('…');
+  for (let i = Math.max(1, current - 1); i <= Math.min(total - 2, current + 1); i++) pages.push(i);
+  if (current < total - 3) pages.push('…');
+  pages.push(total - 1);
+  return pages;
+}
+
+function Paginator({ page, total, pageSize, onPage }: {
+  page: number; total: number; pageSize: number; onPage: (p: number) => void;
+}) {
+  const totalPages = Math.ceil(total / pageSize);
+  const pages = buildPages(page, totalPages);
+  return (
+    <View style={styles.pagination}>
+      <Pressable style={[styles.pageBtn, page === 0 && styles.pageBtnDisabled]} onPress={() => onPage(page - 1)} disabled={page === 0}>
+        <Text style={styles.pageBtnText}>‹</Text>
+      </Pressable>
+      <View style={styles.pageNumbers}>
+        {pages.map((p, i) =>
+          p === '…' ? (
+            <Text key={`dots-${i}`} style={styles.pageDots}>…</Text>
+          ) : (
+            <Pressable key={p} style={[styles.pageNum, p === page && styles.pageNumActive]} onPress={() => onPage(p)}>
+              <Text style={[styles.pageNumText, p === page && styles.pageNumTextActive]}>{p + 1}</Text>
+            </Pressable>
+          )
+        )}
+      </View>
+      <Pressable style={[styles.pageBtn, page === totalPages - 1 && styles.pageBtnDisabled]} onPress={() => onPage(page + 1)} disabled={page === totalPages - 1}>
+        <Text style={styles.pageBtnText}>›</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+// --- Головний екран ---
+
 export default function OrdersScreen() {
   const { contractor, contract } = useAuth();
   const router = useRouter();
@@ -66,23 +109,29 @@ export default function OrdersScreen() {
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(false);
+  const [total, setTotal] = useState(0);
+
+  // Пам'ятаємо поточну сторінку між переходами
+  const currentPageRef = useRef(0);
 
   const load = (p: number) => {
     if (!contractor || !contract) return;
+    currentPageRef.current = p;
     setLoading(true);
     setError(null);
     getOrders(contractor.Ref_Key, contract.Ref_Key, p, PAGE_SIZE)
-      .then(({ items, hasMore: more }) => {
+      .then(({ items, hasMore: more, total: t }) => {
         setOrders(items);
         setHasMore(more);
+        setTotal(t);
         setPage(p);
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   };
 
-  // Оновлюємо список кожного разу, коли вкладка отримує фокус (включно з першим монтуванням)
-  useFocusEffect(useCallback(() => { load(0); }, [contractor?.Ref_Key, contract?.Ref_Key]));
+  // При поверненні на екран — перезавантажуємо ТУ САМУ сторінку (не скидаємо на 0)
+  useFocusEffect(useCallback(() => { load(currentPageRef.current); }, [contractor?.Ref_Key, contract?.Ref_Key]));
 
   return (
     <View style={styles.container}>
@@ -116,24 +165,8 @@ export default function OrdersScreen() {
             )}
             ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
           />
-          {(page > 0 || hasMore) && (
-            <View style={styles.pagination}>
-              <Pressable
-                style={[styles.pageBtn, page === 0 && styles.pageBtnDisabled]}
-                onPress={() => load(page - 1)}
-                disabled={page === 0}
-              >
-                <Text style={styles.pageBtnText}>‹</Text>
-              </Pressable>
-              <Text style={styles.pageInfo}>{page + 1}</Text>
-              <Pressable
-                style={[styles.pageBtn, !hasMore && styles.pageBtnDisabled]}
-                onPress={() => load(page + 1)}
-                disabled={!hasMore}
-              >
-                <Text style={styles.pageBtnText}>›</Text>
-              </Pressable>
-            </View>
+          {total > PAGE_SIZE && (
+            <Paginator page={page} total={total} pageSize={PAGE_SIZE} onPage={load} />
           )}
         </>
       )}
@@ -176,14 +209,24 @@ const styles = StyleSheet.create({
 
   pagination: {
     flexDirection: 'row', alignItems: 'center',
-    justifyContent: 'center', padding: 12, gap: 16,
+    justifyContent: 'center', paddingVertical: 10, paddingHorizontal: 12, gap: 8,
     backgroundColor: '#FFFFFF', borderTopWidth: 1, borderTopColor: '#E2E8F0',
   },
   pageBtn: {
-    width: 36, height: 36, borderRadius: 8,
+    width: 34, height: 34, borderRadius: 8,
     backgroundColor: '#2563EB', justifyContent: 'center', alignItems: 'center',
   },
   pageBtnDisabled: { backgroundColor: '#CBD5E1' },
   pageBtnText: { color: '#FFFFFF', fontSize: 18, fontWeight: '700' },
-  pageInfo: { fontSize: 14, color: '#475569', fontWeight: '500' },
+  pageNumbers: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  pageNum: {
+    minWidth: 34, height: 34, borderRadius: 8,
+    paddingHorizontal: 6,
+    justifyContent: 'center', alignItems: 'center',
+    borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#F8FAFC',
+  },
+  pageNumActive: { backgroundColor: '#2563EB', borderColor: '#2563EB' },
+  pageNumText: { fontSize: 13, fontWeight: '600', color: '#475569' },
+  pageNumTextActive: { color: '#FFFFFF' },
+  pageDots: { fontSize: 14, color: '#94A3B8', paddingHorizontal: 2 },
 });
